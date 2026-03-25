@@ -581,11 +581,14 @@ inject_global_css()
 # ================================
 SHEET_ID = "1u2oSOwtn9Qaz0rAzQxqCual_T1mcu8D2WBeTGAHB0YI"
 
+# ✅ NEW — matches your actual sheet tabs exactly
 SHEET_NAMES = {
-    "students_full": "الطلاب بينات كاملة",
+    "students_full":  "الطلاب بينات كاملة",
     "students_month": "الطلاب شهر 3",
     "teachers":       "المحفظين",
     "dropdowns":      "Dropdown",
+    "salary":         "اسلام وتقفيل المرتبات",
+    "students_basic": "الطلاب",
 }
 
 def build_csv_url(sheet_id, sheet_name):
@@ -594,19 +597,41 @@ def build_csv_url(sheet_id, sheet_name):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_all_data():
-    """Load all sheets from Google Sheets via CSV export."""
+    """Load all sheets from Google Sheets via CSV export — with full error logging."""
     results = {}
+
     for key, name in SHEET_NAMES.items():
         try:
-            url = build_csv_url(SHEET_ID, name)
+            # Encode Arabic sheet names properly
+            import urllib.parse
+            encoded_name = urllib.parse.quote(name)
+            url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={encoded_name}"
+
             df = pd.read_csv(url, encoding="utf-8")
             df.columns = df.columns.str.strip()
+
+            # Drop completely empty rows
+            df.dropna(how="all", inplace=True)
+            df.reset_index(drop=True, inplace=True)
+
             results[key] = df
-            logger.info(f"✅ Loaded '{name}': {len(df)} rows")
+            logger.info(f"✅ Loaded '{name}': {len(df)} rows, {len(df.columns)} cols")
+
         except Exception as e:
             logger.error(f"❌ Failed to load '{name}': {e}")
             results[key] = pd.DataFrame()
+
     return results
+
+# ── DEBUG: show what was loaded (remove after fixing) ──────────────────────
+with st.expander("🔧 تشخيص تحميل البيانات — اضغط للعرض", expanded=False):
+    for key, name in SHEET_NAMES.items():
+        df_check = DATA.get(key, pd.DataFrame())
+        if df_check.empty:
+            st.error(f"❌ **{name}** → فشل التحميل أو فارغ")
+        else:
+            st.success(f"✅ **{name}** → {len(df_check)} صف، {len(df_check.columns)} عمود")
+            st.caption(f"الأعمدة: {list(df_check.columns[:8])}")
 
 def reload_data():
     """Force reload by clearing cache."""
