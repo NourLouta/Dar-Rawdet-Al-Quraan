@@ -623,15 +623,6 @@ def load_all_data():
 
     return results
 
-# ── DEBUG: show what was loaded (remove after fixing) ──────────────────────
-with st.expander("🔧 تشخيص تحميل البيانات — اضغط للعرض", expanded=False):
-    for key, name in SHEET_NAMES.items():
-        df_check = DATA.get(key, pd.DataFrame())
-        if df_check.empty:
-            st.error(f"❌ **{name}** → فشل التحميل أو فارغ")
-        else:
-            st.success(f"✅ **{name}** → {len(df_check)} صف، {len(df_check.columns)} عمود")
-            st.caption(f"الأعمدة: {list(df_check.columns[:8])}")
 
 def reload_data():
     """Force reload by clearing cache."""
@@ -643,12 +634,25 @@ if "data_loaded" not in st.session_state:
     st.session_state["data_loaded"] = False
 
 with st.spinner("⏳ جاري تحميل البيانات..."):
-    DATA = load_all_data()
-    st.session_state["data_loaded"] = True
+    try:
+        DATA = load_all_data()
+        st.session_state["data_loaded"] = True
+    except Exception as e:
+        st.error(f"❌ فشل تحميل البيانات: {e}")
+        DATA = {key: pd.DataFrame() for key in SHEET_NAMES}
 
-students_df  = DATA.get("students_full", pd.DataFrame())
+students_df  = DATA.get("students_full",  pd.DataFrame())
 month_df     = DATA.get("students_month", pd.DataFrame())
-teachers_df  = DATA.get("teachers", pd.DataFrame())
+teachers_df  = DATA.get("teachers",       pd.DataFrame())
+
+# ── DEBUG: placed AFTER DATA is loaded ───────────────────────────────────────
+with st.sidebar.expander("🔧 تشخيص البيانات", expanded=True):
+    for key, name in SHEET_NAMES.items():
+        df_check = DATA.get(key, pd.DataFrame())
+        if df_check.empty:
+            st.sidebar.error(f"❌ {name} → فارغ")
+        else:
+            st.sidebar.success(f"✅ {name} → {len(df_check)} صف")
 
 # ================================
 # 🔧 DATA PROCESSING HELPERS
