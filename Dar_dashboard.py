@@ -699,6 +699,8 @@ students_df = clean_students(students_df)
 teachers_df = clean_teachers(teachers_df)
 
 # ── Teacher rate lookup (per-teacher from sheet, fallback 40) ─────────────────
+VODAFONE_CASH_FEE = 1.01  # 1% Vodafone Cash transfer fee
+HOURLY_RATE = 40  # fallback default — used in salary calculator UI
 def get_teacher_rate(teacher_name):
     """Get hourly rate from المحفظين sheet — per teacher."""
     if teachers_df.empty or "الاسم" not in teachers_df.columns:
@@ -782,11 +784,13 @@ def compute_teacher_salary_new(teacher_name, df):
             "حالة الاشتراك":     str(row.get("حالة الاشتراك", "—")),
         })
 
-    return round(total_hours, 2), round(total_salary, 2), pd.DataFrame(rows)
+    total_cost_with_fee = round(total_salary * VODAFONE_CASH_FEE, 2)
+    return round(total_hours, 2), round(total_salary, 2), pd.DataFrame(rows), total_cost_with_fee
+
 
 def compute_teacher_salary(teacher_name, df, rate=None):
     """Backward-compatible wrapper."""
-    hours, salary, _ = compute_teacher_salary_new(teacher_name, df)
+    hours, salary, _, _ = compute_teacher_salary_new(teacher_name, df)
     return hours, salary
 
 def compute_center_revenue(df):
@@ -803,7 +807,7 @@ def compute_total_salaries(df_students, df_teachers):
     for _, t in df_teachers.iterrows():
         name = str(t.get("الاسم", "")).strip()
         if name:
-            _, salary, _ = compute_teacher_salary_new(name, df_students)
+            _, salary, _, _ = compute_teacher_salary_new(name, df_students)
             total += salary
     return round(total, 2)
 
@@ -1910,7 +1914,7 @@ with tab_finance:
             if not t_name:
                 continue
             rate = get_teacher_rate(t_name)
-            hours, salary, _ = compute_teacher_salary_new(t_name, fin_df)
+             hours, salary, _, cost_with_fee = compute_teacher_salary_new(t_name, fin_df)
 
             t_stu = fin_df[fin_df.get("اسم المحفظ/ة", pd.Series(dtype=str))
                            .astype(str).str.strip() == t_name] if not fin_df.empty else pd.DataFrame()
@@ -1928,6 +1932,7 @@ with tab_finance:
                 "عدد الطلاب النشطين":  t_active,
                 "ساعات العمل الفعلية": f"{hours:.2f}",
                 "الراتب المستحق":      salary,
+                "إجمالي التحويل (فودافون)": round(salary * VODAFONE_CASH_FEE, 2),
                 "إيرادات طلابه":       t_revenue,
                 "هامش الربح":          round(t_revenue - salary, 2),
             })
@@ -1984,21 +1989,23 @@ with tab_finance:
 
     if sel_drill != "— اختر —":
         rate_d = get_teacher_rate(sel_drill)
-        hours_d, salary_d, breakdown_df = compute_teacher_salary_new(sel_drill, fin_df)
+        hours_d, salary_d, breakdown_df, cost_with_fee_d = compute_teacher_salary_new(sel_drill, fin_df)
+        fee_amount_d = round(cost_with_fee_d - salary_d, 2)
 
         d1, d2, d3, d4 = st.columns(4)
         with d1: st.markdown(kpi_card("⏰", f"{hours_d:.2f}", "ساعات العمل الفعلية", "sapphire"), unsafe_allow_html=True)
         with d2: st.markdown(kpi_card("💵", f"{rate_d:.0f} ج.م", "سعر الساعة", "gold"), unsafe_allow_html=True)
         with d3: st.markdown(kpi_card("💰", fmt_currency(salary_d), "الراتب المستحق", "emerald"), unsafe_allow_html=True)
-        with d4:
-            t_rev_d = breakdown_df["تكلفة الطالب"].str.replace(" ج.م","").str.replace(",","").astype(float).sum() if not breakdown_df.empty else 0
-            st.markdown(kpi_card("📊", fmt_currency(t_rev_d), "إجمالي التكلفة", "teal"), unsafe_allow_html=True)
+        with d4: st.markdown(kpi_card("📲", fmt_currency(cost_with_fee_d), "إجمالي التكلفة (مع فودافون)", "amber"), unsafe_allow_html=True)
 
         if not breakdown_df.empty:
             st.markdown(f"""
             <div class="insight-box insight-gold" style="margin-top:1rem;">
                 <b>📐 تفصيل الحساب لـ {sel_drill}:</b><br>
-                لكل طالب: <b>الحصص الفعلية × مدة الحصة (ساعة) × {rate_d:.0f} ج.م</b>
+                لكل طالب: <b>الحصص الفعلية × مدة الحصة (ساعة) × {rate_d:.0f} ج.م</b><br>
+                💳 <b>رسوم فودافون كاش (1%):</b> {fmt_currency(fee_amount_d)}
+                &nbsp;|&nbsp;
+                📲 <b>إجمالي التحويل:</b> {fmt_currency(cost_with_fee_d)}
             </div>
             """, unsafe_allow_html=True)
             display_table(breakdown_df, title=f"تفصيل راتب {sel_drill}", download_name=f"راتب_{sel_drill}.csv")
