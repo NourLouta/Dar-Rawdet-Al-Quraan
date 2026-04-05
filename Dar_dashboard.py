@@ -657,36 +657,34 @@ with st.sidebar.expander("🔧 تشخيص البيانات", expanded=True):
 # ================================
 # 🔧 DATA PROCESSING HELPERS
 # ================================
-HOURLY_RATE = 40  # ج.م per hour — fixed for all teachers
+
+# ── Sidebar filter state (initialized once) ──────────────────────────────────
+if "sel_month" not in st.session_state:
+    st.session_state["sel_month"] = "الكل"
+if "sel_teacher_filter" not in st.session_state:
+    st.session_state["sel_teacher_filter"] = "الكل"
+if "sel_status_filter" not in st.session_state:
+    st.session_state["sel_status_filter"] = "الكل"
 
 def clean_students(df):
-    """Normalize student dataframe."""
     if df.empty:
         return df
     df = df.copy()
-    # Rename columns if needed
-    col_map = {}
-    for c in df.columns:
-        col_map[c] = c.strip()
-    df.rename(columns=col_map, inplace=True)
-
-    # Numeric conversions
-    for col in ["مدة الحصة (دقائق)", "عدد الحصص الأسبوعية", "قيمة الاشتراك الشهري", "العمر"]:
+    df.columns = df.columns.str.strip()
+    for col in ["مدة الحصة (دقائق)", "مدة الحصة (ساعة)",
+                "عدد الحصص الأسبوعية", "عدد الحصص الشهرية",
+                "عدد الحصص الملغية", "قيمة الاشتراك الشهري", "العمر"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Status normalization
     if "حالة الاشتراك" in df.columns:
         df["حالة الاشتراك"] = df["حالة الاشتراك"].fillna("غير محدد").str.strip()
-
     return df
 
 def clean_teachers(df):
-    """Normalize teachers dataframe."""
     if df.empty:
         return df
     df = df.copy()
-    for col in ["سنوات الخبرة"]:
+    for col in ["سنوات الخبرة", "سعر الساعة"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
@@ -694,82 +692,139 @@ def clean_teachers(df):
 students_df = clean_students(students_df)
 teachers_df = clean_teachers(teachers_df)
 
-def get_session_dates(row, max_sessions=9):
-    """Extract all (date, time) session pairs from a student row."""
-    sessions = []
-    for i in range(1, max_sessions + 1):
-        date_col = f"تاريخ الحصة {i}"
-        time_col = "وقت الحصة" if i == 1 else f"وقت الحصة.{i-1}"
-        # Try alternate naming
-        if date_col not in row.index:
-            continue
-        d = str(row.get(date_col, "")).strip()
-        t = str(row.get(time_col, "")).strip()
-        if d and d not in ("nan", "NaN", "", "////", "/////"):
-            sessions.append({"رقم الحصة": i, "التاريخ": d, "الوقت": t})
-    return sessions
+# ── Teacher rate lookup (per-teacher from sheet, fallback 40) ─────────────────
+def get_teacher_rate(teacher_name):
+    """Get hourly rate from المحفظين sheet — per teacher."""
+    if teachers_df.empty or "الاسم" not in teachers_df.columns:
+        return 40
+    mask = teachers_df["الاسم"].astype(str).str.strip() == teacher_name.strip()
+    match = teachers_df[mask]
+    if match.empty:
+        return 40
+    rate = pd.to_numeric(match.iloc[0].get("سعر الساعة", 40), errors="coerce")
+    return float(rate) if not pd.isna(rate) else 40
 
-def count_monthly_hours(row):
-    """Calculate total hours for a student this month."""
-    duration_min = pd.to_numeric(row.get("مدة الحصة (دقائق)", 0), errors="coerce") or 0
-    sessions = get_session_dates(row)
-    total_min = len(sessions) * duration_min
-    return round(total_min / 60, 2)
+# ── Core salary calculation (NEW FORMULA) ────────────────────────────────────
+def compute_student_teacher_cost(row):
+    """
+    Formula:
+      net_sessions = عدد الحصص الشهرية - عدد الحصص الملغية
+      duration_hrs = مدة الحصة (ساعة)   [fallback: دقائق/60]
+      cost = net_sessions × duration_hrs × سعر الساعة (from teacher sheet)
+    """
+    total_sessions    = pd.to_numeric(row.get("عدد الحصص الشهرية", 0),  errors="coerce") or 0
+    cancelled         = pd.to_numeric(row.get("عدد الحصص الملغية", 0),  errors="coerce") or 0
+    net_sessions      = max(0, total_sessions - cancelled)
 
-def teacher_monthly_hours(teacher_name, df):
-    """Sum all hours worked by a teacher across all their students."""
+    # Duration: prefer ساعة column, fallback to دقائق/60
+    duration_hr = pd.to_numeric(row.get("مدة الحصة (ساعة)", np.nan), errors="coerce")
+    if pd.isna(duration_hr) or duration_hr == 0:
+        duration_min = pd.to_numeric(row.get("مدة الحصة (دقائق)", 0), errors="coerce") or 0
+        duration_hr  = duration_min / 60
+
+    teacher_name = str(row.get("اسم المحفظ/ة", "")).strip()
+    rate         = get_teacher_rate(teacher_name)
+
+    cost = round(net_sessions * duration_hr * rate, 2)
+    return {
+        "net_sessions":  int(net_sessions),
+        "total_sessions": int(total_sessions),
+        "cancelled":      int(cancelled),
+        "duration_hr":    round(duration_hr, 4),
+        "rate":           rate,
+        "cost":           cost,
+    }
+
+def compute_teacher_salary_new(teacher_name, df):
+    """
+    Sum cost across all students of this teacher.
+    Returns (total_hours, total_salary, breakdown_df)
+    """
     if df.empty:
-        return 0
-    teacher_students = df[df.get("اسم المحفظ/ة", pd.Series(dtype=str)).str.strip() == teacher_name.strip()]
-    total_hours = 0
-    for _, row in teacher_students.iterrows():
-        total_hours += count_monthly_hours(row)
-    return round(total_hours, 2)
+        return 0, 0, pd.DataFrame()
 
-def compute_teacher_salary(teacher_name, df, rate=HOURLY_RATE):
-    """Compute teacher salary = hours × rate."""
-    hours = teacher_monthly_hours(teacher_name, df)
-    return hours, round(hours * rate, 2)
+    mask = df.get("اسم المحفظ/ة", pd.Series(dtype=str)).astype(str).str.strip() == teacher_name.strip()
+    t_students = df[mask].copy()
+    if t_students.empty:
+        return 0, 0, pd.DataFrame()
+
+    rows = []
+    total_hours  = 0
+    total_salary = 0
+
+    for _, row in t_students.iterrows():
+        calc = compute_student_teacher_cost(row)
+        hours_this = round(calc["net_sessions"] * calc["duration_hr"], 2)
+        total_hours  += hours_this
+        total_salary += calc["cost"]
+        rows.append({
+            "كود الطالب":        str(row.get("كود الطالب", "—")),
+            "اسم الطالب":        str(row.get("الاسم بالكامل", "—")),
+            "إجمالي الحصص":      calc["total_sessions"],
+            "الحصص الملغية":     calc["cancelled"],
+            "الحصص الفعلية":     calc["net_sessions"],
+            "مدة الحصة (ساعة)":  calc["duration_hr"],
+            "ساعات الطالب":      hours_this,
+            "سعر الساعة":        f"{calc['rate']:.0f} ج.م",
+            "تكلفة الطالب":      f"{calc['cost']:,.0f} ج.م",
+            "حالة الاشتراك":     str(row.get("حالة الاشتراك", "—")),
+        })
+
+    return round(total_hours, 2), round(total_salary, 2), pd.DataFrame(rows)
+
+def compute_teacher_salary(teacher_name, df, rate=None):
+    """Backward-compatible wrapper."""
+    hours, salary, _ = compute_teacher_salary_new(teacher_name, df)
+    return hours, salary
 
 def compute_center_revenue(df):
-    """Sum all active student subscriptions."""
     if df.empty:
         return 0
     active = df[df.get("حالة الاشتراك", pd.Series(dtype=str)).str.contains("نشط", na=False)]
-    total = pd.to_numeric(active.get("قيمة الاشتراك الشهري", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    total  = pd.to_numeric(active.get("قيمة الاشتراك الشهري", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     return round(total, 2)
 
 def compute_total_salaries(df_students, df_teachers):
-    """Compute total teacher salaries."""
     if df_teachers.empty:
         return 0
     total = 0
     for _, t in df_teachers.iterrows():
         name = str(t.get("الاسم", "")).strip()
-        _, salary = compute_teacher_salary(name, df_students)
-        total += salary
+        if name:
+            _, salary, _ = compute_teacher_salary_new(name, df_students)
+            total += salary
     return round(total, 2)
 
+def get_session_dates(row, max_sessions=17):
+    sessions = []
+    for i in range(1, max_sessions + 1):
+        date_col = f"تاريخ الحصة {i}"
+        time_col = "وقت الحصة" if i == 1 else f"وقت الحصة.{i-1}"
+        if date_col not in row.index:
+            continue
+        d = str(row.get(date_col, "")).strip()
+        t = str(row.get(time_col, "")).strip()
+        if d and d not in ("nan", "NaN", "", "////", "/////", "None"):
+            sessions.append({"رقم الحصة": i, "التاريخ": d, "الوقت": t})
+    return sessions
+
 def get_next_week_schedule(student_code_or_name, df, weeks_ahead=1):
-    """Generate next week's schedule for a student."""
     if df.empty:
         return pd.DataFrame()
-
-    # Search by code or name
     mask = (
-        df.get("كود الطالب", pd.Series(dtype=str)).astype(str).str.strip().str.upper() == str(student_code_or_name).strip().upper()
+        df.get("كود الطالب", pd.Series(dtype=str)).astype(str).str.strip().str.upper()
+        == str(student_code_or_name).strip().upper()
     ) | (
-        df.get("الاسم بالكامل", pd.Series(dtype=str)).astype(str).str.strip().str.contains(str(student_code_or_name).strip(), na=False)
+        df.get("الاسم بالكامل", pd.Series(dtype=str)).astype(str).str.strip()
+        .str.contains(str(student_code_or_name).strip(), na=False)
     )
     found = df[mask]
     if found.empty:
         return pd.DataFrame()
-
     row = found.iloc[0]
     sessions = get_session_dates(row)
     if not sessions:
         return pd.DataFrame()
-
     result = []
     for s in sessions:
         result.append({
@@ -778,40 +833,59 @@ def get_next_week_schedule(student_code_or_name, df, weeks_ahead=1):
             "المحفظ/ة":      str(row.get("اسم المحفظ/ة", "")),
             "التاريخ":        s["التاريخ"],
             "الوقت":          s["الوقت"],
-            "مدة الحصة":     f"{int(row.get('مدة الحصة (دقائق)', 0) or 0)} دقيقة",
+            "مدة الحصة":     f"{row.get('مدة الحصة (دقائق)', row.get('مدة الحصة (ساعة)', '—'))}",
             "السورة الحالية": str(row.get("السورة الحالية", "")),
         })
     return pd.DataFrame(result)
 
 def get_teacher_schedule(teacher_name, df):
-    """Get all sessions for a teacher across all students."""
     if df.empty:
         return pd.DataFrame()
-
     mask = df.get("اسم المحفظ/ة", pd.Series(dtype=str)).astype(str).str.strip().str.contains(
         str(teacher_name).strip(), na=False
     )
     teacher_students = df[mask]
     if teacher_students.empty:
         return pd.DataFrame()
-
     all_sessions = []
     for _, row in teacher_students.iterrows():
-        sessions = get_session_dates(row)
-        for s in sessions:
+        for s in get_session_dates(row):
             all_sessions.append({
                 "كود الطالب":    str(row.get("كود الطالب", "")),
                 "اسم الطالب":    str(row.get("الاسم بالكامل", "")),
                 "الفئة":         str(row.get("الفئة", "")),
                 "التاريخ":        s["التاريخ"],
                 "الوقت":          s["الوقت"],
-                "مدة الحصة":     f"{int(row.get('مدة الحصة (دقائق)', 0) or 0)} دقيقة",
+                "مدة الحصة":     f"{row.get('مدة الحصة (دقائق)', row.get('مدة الحصة (ساعة)', '—'))}",
                 "نظام الاشتراك": str(row.get("نظام الاشتراك", "")),
             })
-    if not all_sessions:
-        return pd.DataFrame()
-    result = pd.DataFrame(all_sessions)
-    return result
+    return pd.DataFrame(all_sessions) if all_sessions else pd.DataFrame()
+
+# ── Apply global sidebar filters to students_df ───────────────────────────────
+def apply_global_filters(df):
+    """Apply sidebar month + teacher + status filters."""
+    if df.empty:
+        return df
+    filtered = df.copy()
+
+    # Month filter on تاريخ آخر تجديد
+    sel_m = st.session_state.get("sel_month", "الكل")
+    if sel_m != "الكل" and "تاريخ آخر تجديد" in filtered.columns:
+        filtered = filtered[
+            filtered["تاريخ آخر تجديد"].astype(str).str.contains(sel_m, na=False)
+        ]
+
+    # Teacher filter
+    sel_tf = st.session_state.get("sel_teacher_filter", "الكل")
+    if sel_tf != "الكل" and "اسم المحفظ/ة" in filtered.columns:
+        filtered = filtered[filtered["اسم المحفظ/ة"].astype(str).str.strip() == sel_tf]
+
+    # Status filter
+    sel_sf = st.session_state.get("sel_status_filter", "الكل")
+    if sel_sf != "الكل" and "حالة الاشتراك" in filtered.columns:
+        filtered = filtered[filtered["حالة الاشتراك"].str.contains(sel_sf, na=False)]
+
+    return filtered
 
 # ================================
 # 🧩 UI COMPONENTS
@@ -910,53 +984,99 @@ def render_sidebar():
                  if LOGO_B64 else '<div style="font-size:2.5rem;text-align:center;">🕌</div>')
 
     st.sidebar.markdown(f"""
-    <div style="
-        background: {T.gradient('#0F2E24','#1B4A3A',160)};
-        border: 1px solid {T.PRIMARY};
-        border-radius: {T.BORDER_RADIUS_LARGE};
-        padding: 1.5rem 1rem;
-        text-align: center;
-        margin-bottom: 1rem;
-        box-shadow: {T.SHADOW_GLOW};
-        direction: rtl;
-    ">
+    <div style="background:{T.gradient('#0F2E24','#1B4A3A',160)};border:1px solid {T.PRIMARY};
+        border-radius:{T.BORDER_RADIUS_LARGE};padding:1.5rem 1rem;text-align:center;
+        margin-bottom:1rem;box-shadow:{T.SHADOW_GLOW};direction:rtl;">
         {logo_html}
         <div style="color:{T.GOLD_LIGHT};font-size:1rem;font-weight:800;">دار روضة القرآن</div>
         <div style="color:rgba(255,255,255,0.5);font-size:0.75rem;margin-top:0.2rem;">نظام الإدارة المتكامل</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Stats summary
-    active_count  = 0
-    frozen_count  = 0
-    teacher_count = 0
-    if not students_df.empty and "حالة الاشتراك" in students_df.columns:
-        active_count = students_df["حالة الاشتراك"].str.contains("نشط", na=False).sum()
-        frozen_count = students_df["حالة الاشتراك"].str.contains("تجميد", na=False).sum()
-    if not teachers_df.empty:
-        teacher_count = len(teachers_df)
+    # ── Quick Stats ───────────────────────────────────────────────────────────
+    active_count  = students_df["حالة الاشتراك"].str.contains("نشط", na=False).sum() if not students_df.empty and "حالة الاشتراك" in students_df.columns else 0
+    frozen_count  = students_df["حالة الاشتراك"].str.contains("تجميد", na=False).sum() if not students_df.empty and "حالة الاشتراك" in students_df.columns else 0
+    teacher_count = len(teachers_df) if not teachers_df.empty else 0
+    total_rev_sb  = compute_center_revenue(students_df)
 
     st.sidebar.markdown(f"""
-    <div style="
-        background:rgba(27,107,90,0.15);
-        border:1px solid {T.PRIMARY};
-        border-radius:{T.BORDER_RADIUS};
-        padding:0.9rem;
-        margin-bottom:0.8rem;
-        direction:rtl;
-    ">
+    <div style="background:rgba(27,107,90,0.15);border:1px solid {T.PRIMARY};
+        border-radius:{T.BORDER_RADIUS};padding:0.9rem;margin-bottom:0.8rem;direction:rtl;">
         <div style="color:{T.GOLD_LIGHT};font-size:0.78rem;font-weight:700;margin-bottom:0.5rem;">📊 ملخص سريع</div>
-        <div style="color:rgba(255,255,255,0.8);font-size:0.78rem;line-height:1.9;">
+        <div style="color:rgba(255,255,255,0.85);font-size:0.78rem;line-height:2;">
             ✅ <b style="color:#10B981;">طلاب نشطون:</b> {active_count}<br>
             🔵 <b style="color:#3B82F6;">تجميد مؤقت:</b> {frozen_count}<br>
-            👩‍🏫 <b style="color:{T.GOLD_LIGHT};">المحفظون:</b> {teacher_count}
+            👩‍🏫 <b style="color:{T.GOLD_LIGHT};">المحفظون:</b> {teacher_count}<br>
+            💰 <b style="color:{T.GOLD_LIGHT};">الإيرادات:</b> {fmt_currency(total_rev_sb)}
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Reload button
+    # ── Global Filters ────────────────────────────────────────────────────────
+    st.sidebar.markdown(f"""
+    <div style="color:{T.GOLD_LIGHT};font-size:0.82rem;font-weight:700;
+        margin:0.8rem 0 0.4rem;direction:rtl;">🔽 فلاتر عامة</div>
+    """, unsafe_allow_html=True)
+
+    # Month filter — extract unique months from تاريخ آخر تجديد
+    month_options = ["الكل"]
+    if not students_df.empty and "تاريخ آخر تجديد" in students_df.columns:
+        raw_dates = students_df["تاريخ آخر تجديد"].dropna().astype(str)
+        # Extract MM-YY or YYYY patterns
+        months_found = set()
+        for d in raw_dates:
+            # match patterns like 03-08-26 → "03" or 2026-03 → "03"
+            m = re.search(r'(\d{1,2})[/-](\d{2,4})', d)
+            if m:
+                months_found.add(m.group(0)[:7])  # keep first 7 chars
+        month_options += sorted(months_found, reverse=True)
+
+    sel_month = st.sidebar.selectbox(
+        "📅 الشهر",
+        month_options,
+        index=month_options.index(st.session_state["sel_month"])
+              if st.session_state["sel_month"] in month_options else 0,
+        key="sb_month"
+    )
+    st.session_state["sel_month"] = sel_month
+
+    # Teacher filter
+    teacher_opts = ["الكل"]
+    if not teachers_df.empty and "الاسم" in teachers_df.columns:
+        teacher_opts += sorted(teachers_df["الاسم"].dropna().unique().tolist())
+
+    sel_tf = st.sidebar.selectbox(
+        "👩‍🏫 المحفظ/ة",
+        teacher_opts,
+        index=teacher_opts.index(st.session_state["sel_teacher_filter"])
+              if st.session_state["sel_teacher_filter"] in teacher_opts else 0,
+        key="sb_teacher"
+    )
+    st.session_state["sel_teacher_filter"] = sel_tf
+
+    # Status filter
+    status_opts = ["الكل", "نشط", "تجميد مؤقت", "موقوف"]
+    sel_sf = st.sidebar.selectbox(
+        "📌 حالة الاشتراك",
+        status_opts,
+        index=status_opts.index(st.session_state["sel_status_filter"])
+              if st.session_state["sel_status_filter"] in status_opts else 0,
+        key="sb_status"
+    )
+    st.session_state["sel_status_filter"] = sel_sf
+
+    # Reset filters button
+    if st.sidebar.button("🔁 إعادة ضبط الفلاتر", use_container_width=True):
+        st.session_state["sel_month"]          = "الكل"
+        st.session_state["sel_teacher_filter"] = "الكل"
+        st.session_state["sel_status_filter"]  = "الكل"
+        st.rerun()
+
+    st.sidebar.markdown("---")
+
     if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
-        reload_data()
+        load_all_data.clear()
+        st.session_state["data_loaded"] = False
         st.rerun()
 
     if st.sidebar.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -964,6 +1084,9 @@ def render_sidebar():
         st.rerun()
 
 render_sidebar()
+
+# Apply global filters — used in all tabs
+filtered_students_df = apply_global_filters(students_df)
 
 # ================================
 # 📊 MAIN HEADER
@@ -1592,53 +1715,54 @@ with tab_schedule:
 # TAB 5 — المالية
 # ============================================================
 with tab_finance:
-    st.markdown(section_header("التقرير المالي الشهري", "الإيرادات والرواتب وصافي الربح", "💰"), unsafe_allow_html=True)
+    st.markdown(section_header("التقرير المالي الشهري", "الإيرادات والرواتب وصافي الربح — محاسبة دقيقة", "💰"), unsafe_allow_html=True)
 
-    # ── Top KPIs ─────────────────────────────────────────────────────────────
-    total_rev    = compute_center_revenue(students_df)
-    total_sal    = compute_total_salaries(students_df, teachers_df)
-    net_prof     = total_rev - total_sal
+    # Use globally filtered data
+    fin_df = filtered_students_df.copy() if not filtered_students_df.empty else students_df.copy()
+
+    # ── Top KPIs ──────────────────────────────────────────────────────────────
+    total_rev     = compute_center_revenue(fin_df)
+    total_sal     = compute_total_salaries(fin_df, teachers_df)
+    net_prof      = total_rev - total_sal
     profit_margin = (net_prof / total_rev * 100) if total_rev > 0 else 0
 
     fk1, fk2, fk3, fk4 = st.columns(4)
-    with fk1: st.markdown(kpi_card("💵", fmt_currency(total_rev), "إجمالي الإيرادات", "gold"), unsafe_allow_html=True)
-    with fk2: st.markdown(kpi_card("💸", fmt_currency(total_sal), "إجمالي الرواتب", "amber"), unsafe_allow_html=True)
-    with fk3: st.markdown(kpi_card("📈", fmt_currency(net_prof), "صافي الربح", "emerald" if net_prof >= 0 else "crimson"), unsafe_allow_html=True)
-    with fk4: st.markdown(kpi_card("📊", f"{profit_margin:.1f}%", "هامش الربح", "sapphire"), unsafe_allow_html=True)
+    with fk1: st.markdown(kpi_card("💵", fmt_currency(total_rev),  "إجمالي الإيرادات", "gold"), unsafe_allow_html=True)
+    with fk2: st.markdown(kpi_card("💸", fmt_currency(total_sal),  "إجمالي الرواتب",   "amber"), unsafe_allow_html=True)
+    with fk3: st.markdown(kpi_card("📈", fmt_currency(net_prof),   "صافي الربح",
+                                   "emerald" if net_prof >= 0 else "crimson"), unsafe_allow_html=True)
+    with fk4: st.markdown(kpi_card("📊", f"{profit_margin:.1f}%", "هامش الربح",        "sapphire"), unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # ── Revenue Gauge ─────────────────────────────────────────────────────────
+    # ── Charts ────────────────────────────────────────────────────────────────
     fg1, fg2 = st.columns(2)
     with fg1:
-        fig_gauge = go.Figure(go.Indicator(
-            mode="gauge+number+delta",
-            value=net_prof,
-            delta={"reference": total_rev * 0.5, "valueformat": ".0f"},
-            title={"text": "صافي الربح الشهري (ج.م)", "font": {"size": 14, "family": T.FONT_FAMILY}},
-            gauge={
-                "axis": {"range": [0, total_rev], "tickwidth": 1},
-                "bar": {"color": T.PRIMARY},
-                "steps": [
-                    {"range": [0, total_rev * 0.3], "color": "rgba(239,68,68,0.2)"},
-                    {"range": [total_rev * 0.3, total_rev * 0.6], "color": "rgba(245,158,11,0.2)"},
-                    {"range": [total_rev * 0.6, total_rev], "color": "rgba(16,185,129,0.2)"},
-                ],
-                "threshold": {"line": {"color": T.GOLD, "width": 4}, "thickness": 0.75, "value": total_rev * 0.5},
-            },
-            number={"suffix": " ج.م", "font": {"size": 22, "family": T.FONT_FAMILY}},
-        ))
-        fig_gauge.update_layout(
-            height=320,
-            paper_bgcolor="rgba(247,251,249,0.9)",
-            font=dict(family=T.FONT_FAMILY),
-        )
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        if total_rev > 0:
+            fig_gauge = go.Figure(go.Indicator(
+                mode="gauge+number+delta",
+                value=net_prof,
+                delta={"reference": total_rev * 0.5, "valueformat": ".0f"},
+                title={"text": "صافي الربح الشهري (ج.م)", "font": {"size": 14, "family": T.FONT_FAMILY}},
+                gauge={
+                    "axis": {"range": [0, max(total_rev, 1)], "tickwidth": 1},
+                    "bar": {"color": T.PRIMARY},
+                    "steps": [
+                        {"range": [0, total_rev * 0.3], "color": "rgba(239,68,68,0.2)"},
+                        {"range": [total_rev * 0.3, total_rev * 0.6], "color": "rgba(245,158,11,0.2)"},
+                        {"range": [total_rev * 0.6, total_rev], "color": "rgba(16,185,129,0.2)"},
+                    ],
+                    "threshold": {"line": {"color": T.GOLD, "width": 4},
+                                  "thickness": 0.75, "value": total_rev * 0.5},
+                },
+                number={"suffix": " ج.م", "font": {"size": 22, "family": T.FONT_FAMILY}},
+            ))
+            fig_gauge.update_layout(height=320, paper_bgcolor="rgba(247,251,249,0.9)",
+                                    font=dict(family=T.FONT_FAMILY))
+            st.plotly_chart(fig_gauge, use_container_width=True)
 
     with fg2:
-        # Revenue vs Salary Waterfall
         fig_wf = go.Figure(go.Waterfall(
-            name="المالية",
             orientation="v",
             measure=["absolute", "relative", "total"],
             x=["الإيرادات", "الرواتب", "صافي الربح"],
@@ -1655,111 +1779,145 @@ with tab_finance:
 
     st.markdown("---")
 
-    # ── Per-Teacher Salary Table ──────────────────────────────────────────────
-    st.markdown(section_header("كشف رواتب المحفظين", f"سعر الساعة الثابت: {HOURLY_RATE} ج.م", "📋"), unsafe_allow_html=True)
+    # ── Per-Teacher Salary Breakdown (ACCOUNTANT VIEW) ────────────────────────
+    st.markdown(section_header("كشف رواتب المحفظين", "الحساب: (الحصص الشهرية − الملغية) × مدة الحصة × سعر الساعة", "📋"), unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class="insight-box insight-gold">
+        <b>📐 معادلة الراتب:</b>
+        الحصص الفعلية = إجمالي الحصص الشهرية − الحصص الملغية &nbsp;|&nbsp;
+        الراتب = الحصص الفعلية × مدة الحصة (ساعة) × سعر الساعة الخاص بالمحفظ/ة
+    </div>
+    """, unsafe_allow_html=True)
 
     if not teachers_df.empty and "الاسم" in teachers_df.columns:
+
         salary_records = []
         for _, t in teachers_df.iterrows():
             t_name = str(t.get("الاسم", "")).strip()
             if not t_name:
                 continue
-            hours, salary = compute_teacher_salary(t_name, students_df)
+            rate = get_teacher_rate(t_name)
+            hours, salary, _ = compute_teacher_salary_new(t_name, fin_df)
 
-            # Count active students
-            t_active = 0
-            t_revenue = 0
-            if not students_df.empty:
-                t_stu = students_df[
-                    students_df.get("اسم المحفظ/ة", pd.Series(dtype=str)).astype(str).str.strip().str.contains(t_name, na=False)
-                ]
-                t_active = t_stu[t_stu.get("حالة الاشتراك", pd.Series(dtype=str)).str.contains("نشط", na=False)].shape[0]
-                t_revenue = pd.to_numeric(
-                    t_stu[t_stu.get("حالة الاشتراك", pd.Series(dtype=str)).str.contains("نشط", na=False)].get("قيمة الاشتراك الشهري", pd.Series(dtype=float)),
-                    errors="coerce"
-                ).fillna(0).sum()
+            t_stu = fin_df[fin_df.get("اسم المحفظ/ة", pd.Series(dtype=str))
+                           .astype(str).str.strip() == t_name] if not fin_df.empty else pd.DataFrame()
+            t_active  = t_stu[t_stu.get("حالة الاشتراك", pd.Series(dtype=str))
+                               .str.contains("نشط", na=False)].shape[0] if not t_stu.empty else 0
+            t_revenue = pd.to_numeric(
+                t_stu[t_stu.get("حالة الاشتراك", pd.Series(dtype=str)).str.contains("نشط", na=False)]
+                .get("قيمة الاشتراك الشهري", pd.Series(dtype=float)),
+                errors="coerce").fillna(0).sum() if not t_stu.empty else 0
 
             salary_records.append({
-                "الكود":          str(t.get("ID", "—")),
-                "اسم المحفظ/ة":   t_name,
-                "المحافظة":        str(t.get("المحافظة", "—")),
-                "عدد الطلاب النشطين": t_active,
-                "ساعات العمل":    f"{hours:.2f}",
-                "سعر الساعة":     f"{HOURLY_RATE} ج.م",
-                "الراتب المستحق": f"{salary:,.0f} ج.م",
-                "إيرادات طلابه":  f"{t_revenue:,.0f} ج.م",
-                "هامش الربح":     f"{(t_revenue - salary):,.0f} ج.م",
+                "الكود":               str(t.get("ID", "—")),
+                "اسم المحفظ/ة":        t_name,
+                "سعر الساعة":          f"{rate:.0f} ج.م",
+                "عدد الطلاب النشطين":  t_active,
+                "ساعات العمل الفعلية": f"{hours:.2f}",
+                "الراتب المستحق":      salary,
+                "إيرادات طلابه":       t_revenue,
+                "هامش الربح":          round(t_revenue - salary, 2),
             })
 
-        salary_df = pd.DataFrame(salary_records)
+        if salary_records:
+            sal_display = pd.DataFrame(salary_records).copy()
+            sal_display["الراتب المستحق"] = sal_display["الراتب المستحق"].apply(lambda x: f"{x:,.0f} ج.م")
+            sal_display["إيرادات طلابه"]  = sal_display["إيرادات طلابه"].apply(lambda x: f"{x:,.0f} ج.م")
+            sal_display["هامش الربح"]     = sal_display["هامش الربح"].apply(lambda x: f"{x:,.0f} ج.م")
 
-        # Summary row
-        total_hours_all = sum(float(r["ساعات العمل"]) for r in salary_records)
-        total_sal_all   = sum(float(str(r["الراتب المستحق"]).replace(" ج.م","").replace(",","")) for r in salary_records)
+            total_hours_all = sum(float(r["ساعات العمل الفعلية"]) for r in salary_records)
+            total_sal_all   = sum(r["الراتب المستحق"] for r in salary_records)
 
-        st.markdown(f"""
-        <div class="insight-box insight-gold">
-            📊 <b>إجمالي ساعات العمل:</b> {total_hours_all:.2f} ساعة &nbsp;|&nbsp;
-            💰 <b>إجمالي الرواتب:</b> {fmt_currency(total_sal_all)} &nbsp;|&nbsp;
-            📈 <b>صافي الربح:</b> {fmt_currency(total_rev - total_sal_all)}
-        </div>
-        """, unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="insight-box insight-teal">
+                ⏱️ <b>إجمالي ساعات العمل:</b> {total_hours_all:.2f} ساعة &nbsp;|&nbsp;
+                💸 <b>إجمالي الرواتب:</b> {fmt_currency(total_sal_all)} &nbsp;|&nbsp;
+                📈 <b>صافي الربح:</b> {fmt_currency(total_rev - total_sal_all)}
+            </div>
+            """, unsafe_allow_html=True)
 
-        display_table(salary_df, title="كشف الرواتب الشهري", download_name="كشف_الرواتب.csv")
+            display_table(sal_display, title="كشف الرواتب الشهري", download_name="كشف_الرواتب.csv")
 
-        # Salary bar chart
-        fig_sal = go.Figure(go.Bar(
-            x=[r["اسم المحفظ/ة"] for r in salary_records],
-            y=[float(str(r["الراتب المستحق"]).replace(" ج.م","").replace(",","")) for r in salary_records],
-            marker=dict(color=T.PRIMARY, line=dict(color=T.PRIMARY_DARK, width=1)),
-            text=[r["الراتب المستحق"] for r in salary_records],
-            textposition="outside",
-            name="الراتب",
-        ))
-        # Add revenue bars
-        fig_sal.add_trace(go.Bar(
-            x=[r["اسم المحفظ/ة"] for r in salary_records],
-            y=[float(str(r["إيرادات طلابه"]).replace(" ج.م","").replace(",","")) for r in salary_records],
-            marker=dict(color=T.GOLD, line=dict(color=T.GOLD_DARK, width=1)),
-            text=[r["إيرادات طلابه"] for r in salary_records],
-            textposition="outside",
-            name="الإيرادات",
-        ))
-        plotly_layout(fig_sal, "الراتب مقابل الإيرادات لكل محفظ/ة (ج.م)", 380)
-        fig_sal.update_layout(barmode="group")
-        st.plotly_chart(fig_sal, use_container_width=True)
+            # Chart
+            fig_sal = go.Figure()
+            fig_sal.add_trace(go.Bar(
+                x=[r["اسم المحفظ/ة"] for r in salary_records],
+                y=[r["الراتب المستحق"] for r in salary_records],
+                name="الراتب", marker=dict(color=T.PRIMARY),
+                text=[fmt_currency(r["الراتب المستحق"]) for r in salary_records],
+                textposition="outside",
+            ))
+            fig_sal.add_trace(go.Bar(
+                x=[r["اسم المحفظ/ة"] for r in salary_records],
+                y=[r["إيرادات طلابه"] for r in salary_records],
+                name="الإيرادات", marker=dict(color=T.GOLD),
+                text=[fmt_currency(r["إيرادات طلابه"]) for r in salary_records],
+                textposition="outside",
+            ))
+            plotly_layout(fig_sal, "الراتب مقابل الإيرادات لكل محفظ/ة (ج.م)", 380)
+            fig_sal.update_layout(barmode="group")
+            st.plotly_chart(fig_sal, use_container_width=True)
 
-    # ── Per-Student Payment Due ───────────────────────────────────────────────
     st.markdown("---")
-    st.markdown(section_header("مستحقات الطلاب", "ما يجب أن يدفعه كل طالب هذا الشهر", "🧾"), unsafe_allow_html=True)
 
-    if not students_df.empty:
-        active_students_df = students_df[
-            students_df.get("حالة الاشتراك", pd.Series(dtype=str)).str.contains("نشط", na=False)
-        ].copy()
+    # ── Teacher Drill-Down (Accountant Detail) ────────────────────────────────
+    st.markdown(section_header("تفصيل راتب المحفظ/ة", "أدخل كود المحفظ/ة لعرض حساب الراتب بالتفصيل", "🔬"), unsafe_allow_html=True)
 
-        payment_records = []
-        for _, row in active_students_df.iterrows():
-            sessions = get_session_dates(row)
-            duration = pd.to_numeric(row.get("مدة الحصة (دقائق)", 0), errors="coerce") or 0
-            total_min = len(sessions) * duration
-            total_hrs = round(total_min / 60, 2)
-            sub_val   = pd.to_numeric(row.get("قيمة الاشتراك الشهري", 0), errors="coerce") or 0
+    drill_names = ["— اختر —"]
+    if not teachers_df.empty and "الاسم" in teachers_df.columns:
+        drill_names += teachers_df["الاسم"].dropna().tolist()
 
-            payment_records.append({
-                "كود الطالب":       str(row.get("كود الطالب", "—")),
-                "اسم الطالب":       str(row.get("الاسم بالكامل", "—")),
-                "المحفظ/ة":         str(row.get("اسم المحفظ/ة", "—")),
-                "عدد الحصص":        len(sessions),
-                "مدة الحصة (د)":    int(duration),
-                "إجمالي الساعات":   f"{total_hrs:.2f}",
-                "نظام الاشتراك":    str(row.get("نظام الاشتراك", "—")),
-                "المبلغ المستحق":   f"{sub_val:,.0f} ج.م",
-                "تاريخ آخر تجديد":  str(row.get("تاريخ آخر تجديد", "—")),
+    sel_drill = st.selectbox("اختر المحفظ/ة للتفصيل", drill_names, key="fin_drill_sel")
+
+    if sel_drill != "— اختر —":
+        rate_d = get_teacher_rate(sel_drill)
+        hours_d, salary_d, breakdown_df = compute_teacher_salary_new(sel_drill, fin_df)
+
+        d1, d2, d3, d4 = st.columns(4)
+        with d1: st.markdown(kpi_card("⏰", f"{hours_d:.2f}", "ساعات العمل الفعلية", "sapphire"), unsafe_allow_html=True)
+        with d2: st.markdown(kpi_card("💵", f"{rate_d:.0f} ج.م", "سعر الساعة", "gold"), unsafe_allow_html=True)
+        with d3: st.markdown(kpi_card("💰", fmt_currency(salary_d), "الراتب المستحق", "emerald"), unsafe_allow_html=True)
+        with d4:
+            t_rev_d = breakdown_df["تكلفة الطالب"].str.replace(" ج.م","").str.replace(",","").astype(float).sum() if not breakdown_df.empty else 0
+            st.markdown(kpi_card("📊", fmt_currency(t_rev_d), "إجمالي التكلفة", "teal"), unsafe_allow_html=True)
+
+        if not breakdown_df.empty:
+            st.markdown(f"""
+            <div class="insight-box insight-gold" style="margin-top:1rem;">
+                <b>📐 تفصيل الحساب لـ {sel_drill}:</b><br>
+                لكل طالب: <b>الحصص الفعلية × مدة الحصة (ساعة) × {rate_d:.0f} ج.م</b>
+            </div>
+            """, unsafe_allow_html=True)
+            display_table(breakdown_df, title=f"تفصيل راتب {sel_drill}", download_name=f"راتب_{sel_drill}.csv")
+
+    st.markdown("---")
+
+    # ── Student Payment Due ───────────────────────────────────────────────────
+    st.markdown(section_header("مستحقات الطلاب", "ما يجب أن يدفعه كل طالب نشط هذا الشهر", "🧾"), unsafe_allow_html=True)
+
+    active_fin = fin_df[fin_df.get("حالة الاشتراك", pd.Series(dtype=str)).str.contains("نشط", na=False)].copy() if not fin_df.empty else pd.DataFrame()
+
+    if not active_fin.empty:
+        pay_rows = []
+        for _, row in active_fin.iterrows():
+            calc     = compute_student_teacher_cost(row)
+            sub_val  = pd.to_numeric(row.get("قيمة الاشتراك الشهري", 0), errors="coerce") or 0
+            pay_rows.append({
+                "كود الطالب":        str(row.get("كود الطالب", "—")),
+                "اسم الطالب":        str(row.get("الاسم بالكامل", "—")),
+                "المحفظ/ة":          str(row.get("اسم المحفظ/ة", "—")),
+                "إجمالي الحصص":      calc["total_sessions"],
+                "الحصص الملغية":     calc["cancelled"],
+                "الحصص الفعلية":     calc["net_sessions"],
+                "مدة الحصة (ساعة)":  calc["duration_hr"],
+                "تكلفة المحفظ":      f"{calc['cost']:,.0f} ج.م",
+                "اشتراك الطالب":     f"{sub_val:,.0f} ج.م",
+                "هامش الطالب":       f"{sub_val - calc['cost']:,.0f} ج.م",
+                "تاريخ آخر تجديد":   str(row.get("تاريخ آخر تجديد", "—")),
             })
-
-        payment_df = pd.DataFrame(payment_records)
-        display_table(payment_df, title="مستحقات الطلاب النشطين", download_name="مستحقات_الطلاب.csv")
+        pay_df = pd.DataFrame(pay_rows)
+        display_table(pay_df, title="مستحقات الطلاب النشطين", download_name="مستحقات_الطلاب.csv")
 
 # ============================================================
 # TAB 6 — البحث والأتمتة
