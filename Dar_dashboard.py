@@ -416,11 +416,27 @@ def load_all_data():
             encoded_name = urllib.parse.quote(name)
             url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={encoded_name}"
             df = pd.read_csv(url, encoding="utf-8")
+
+            # ── Strip ALL column names (removes trailing/leading spaces) ──────
             df.columns = df.columns.str.strip()
+
+            # ── Drop completely empty rows ─────────────────────────────────────
             df.dropna(how="all", inplace=True)
             df.reset_index(drop=True, inplace=True)
+
+            # ── FIX: "الطلاب بينات كاملة" has a junk label row at index 0 ─────
+            # The first row contains "شهر 3" / "شهر 4" labels, not real data.
+            # Detect it: if "كود الطالب" column exists but row 0 value is blank
+            # or contains "شهر", drop it.
+            if key == "students_full" and "كود الطالب" in df.columns:
+                first_val = str(df["كود الطالب"].iloc[0]).strip()
+                if first_val in ("", "nan", "None") or "شهر" in str(df.iloc[0].values):
+                    df = df.iloc[1:].reset_index(drop=True)
+                    logger.info(f"🔧 Dropped junk header row from '{name}'")
+
             results[key] = df
             logger.info(f"✅ Loaded '{name}': {len(df)} rows, {len(df.columns)} cols")
+
         except Exception as e:
             logger.error(f"❌ Failed to load '{name}': {e}")
             results[key] = pd.DataFrame()
@@ -480,14 +496,35 @@ def clean_students(df):
     if df.empty:
         return df
     df = df.copy()
+
+    # ── Strip ALL column names again (belt-and-suspenders) ────────────────────
     df.columns = df.columns.str.strip()
-    for col in ["مدة الحصة (دقائق)", "مدة الحصة (ساعة)",
-                "عدد الحصص الأسبوعية", "عدد الحصص الشهرية",
-                "عدد الحصص الملغية", "قيمة الاشتراك الشهري", "العمر"]:
+
+    # ── Normalize numeric columns — strip spaces from names before lookup ─────
+    numeric_cols = [
+        "مدة الحصة (دقائق)", "مدة الحصة (ساعة)",
+        "عدد الحصص الأسبوعية", "عدد الحصص الشهرية",
+        "عدد الحصص الملغية",  "العمر",
+    ]
+    for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # ── قيمة الاشتراك الشهري — always use the FIRST occurrence (شهر 3 block) ──
+    # The sheet has two blocks; pandas renames the 2nd to "قيمة الاشتراك الشهري.1"
+    # We keep only the first one and make sure it's numeric.
+    if "قيمة الاشتراك الشهري" in df.columns:
+        df["قيمة الاشتراك الشهري"] = pd.to_numeric(df["قيمة الاشتراك الشهري"], errors="coerce")
+
+    # ── حالة الاشتراك ──────────────────────────────────────────────────────────
     if "حالة الاشتراك" in df.columns:
         df["حالة الاشتراك"] = df["حالة الاشتراك"].fillna("غير محدد").str.strip()
+
+    # ── Drop rows where كود الطالب is blank (leftover label rows) ─────────────
+    if "كود الطالب" in df.columns:
+        df = df[df["كود الطالب"].astype(str).str.strip().str.startswith("S-")]
+        df = df.reset_index(drop=True)
+
     return df
 
 def clean_teachers(df):
