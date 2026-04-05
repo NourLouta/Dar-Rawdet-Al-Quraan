@@ -505,6 +505,7 @@ def clean_students(df):
         "مدة الحصة (دقائق)", "مدة الحصة (ساعة)",
         "عدد الحصص الأسبوعية", "عدد الحصص الشهرية",
         "عدد الحصص الملغية",  "العمر",
+        "الشهر",   # ← ADD THIS LINE
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -585,7 +586,6 @@ def compute_teacher_salary_new(teacher_name, df):
     t_students = df[mask].copy()
     if t_students.empty:
         return 0, 0, pd.DataFrame(), 0
-
     rows         = []
     total_hours  = 0
     total_salary = 0
@@ -607,9 +607,19 @@ def compute_teacher_salary_new(teacher_name, df):
             "تكلفة الطالب":     f"{calc['cost']:,.0f} ج.م",
             "حالة الاشتراك":    str(row.get("حالة الاشتراك", "—")),
         })
-
     total_cost_with_fee = round(total_salary * VODAFONE_CASH_FEE, 2)
     return round(total_hours, 2), round(total_salary, 2), pd.DataFrame(rows), total_cost_with_fee
+
+def filter_df_by_month(df, month_num):
+    """Filter students_full by the الشهر column (integer 1–12)."""
+    if df.empty or month_num is None:
+        return df
+    col = "الشهر"
+    if col not in df.columns:
+        return df
+    df2 = df.copy()
+    df2[col] = pd.to_numeric(df2[col], errors="coerce")
+    return df2[df2[col] == int(month_num)].reset_index(drop=True)
 
 def compute_teacher_salary(teacher_name, df, rate=None):
     """Backward-compatible wrapper — returns (hours, salary)."""
@@ -1616,34 +1626,85 @@ with tab_finance:
             fig_sal.update_layout(barmode="group")
             st.plotly_chart(fig_sal, use_container_width=True)
 
+ 
     st.markdown("---")
-    st.markdown(section_header("تفصيل راتب المحفظ/ة", "اختر المحفظ/ة لعرض حساب الراتب بالتفصيل", "🔬"), unsafe_allow_html=True)
+    st.markdown(section_header("تفصيل راتب المحفظ/ة", "اختر المحفظ/ة والشهر لعرض حساب الراتب بالتفصيل", "🔬"), unsafe_allow_html=True)
 
-    drill_names = ["— اختر —"] + (teachers_df["الاسم"].dropna().tolist() if not teachers_df.empty and "الاسم" in teachers_df.columns else [])
-    sel_drill   = st.selectbox("اختر المحفظ/ة للتفصيل", drill_names, key="fin_drill_sel")
+    ARABIC_MONTHS_FIN = {
+        1:"يناير", 2:"فبراير", 3:"مارس",   4:"أبريل",
+        5:"مايو",  6:"يونيو",  7:"يوليو",  8:"أغسطس",
+        9:"سبتمبر",10:"أكتوبر",11:"نوفمبر",12:"ديسمبر",
+    }
+
+    available_months = []
+    if not students_df.empty and "الشهر" in students_df.columns:
+        available_months = sorted(
+            pd.to_numeric(students_df["الشهر"], errors="coerce")
+            .dropna().astype(int).unique().tolist()
+        )
+
+    drill_col1, drill_col2 = st.columns(2)
+    with drill_col1:
+        drill_names = ["— اختر —"] + (
+            teachers_df["الاسم"].dropna().tolist()
+            if not teachers_df.empty and "الاسم" in teachers_df.columns else []
+        )
+        sel_drill = st.selectbox("👩‍🏫 اختر المحفظ/ة للتفصيل", drill_names, key="fin_drill_sel")
+    with drill_col2:
+        month_opts = ["الكل"] + [f"{ARABIC_MONTHS_FIN[m]} ({m})" for m in available_months]
+        sel_drill_month = st.selectbox("📅 اختر الشهر", month_opts, key="fin_drill_month")
+
+    drill_month_num = None
+    if sel_drill_month != "الكل":
+        try:
+            drill_month_num = int(sel_drill_month.split("(")[1].replace(")", "").strip())
+        except Exception:
+            drill_month_num = None
+
+    drill_df     = filter_df_by_month(fin_df, drill_month_num) if drill_month_num else fin_df.copy()
+    month_label  = sel_drill_month if sel_drill_month != "الكل" else "جميع الأشهر"
 
     if sel_drill != "— اختر —":
-        rate_d                              = get_teacher_rate(sel_drill)
-        hours_d, salary_d, breakdown_df, cost_with_fee_d = compute_teacher_salary_new(sel_drill, fin_df)
-        fee_amount_d                        = round(cost_with_fee_d - salary_d, 2)
+        rate_d = get_teacher_rate(sel_drill)
+        hours_d, salary_d, breakdown_df, cost_with_fee_d = compute_teacher_salary_new(sel_drill, drill_df)
+        fee_amount_d = round(cost_with_fee_d - salary_d, 2)
+
+        teacher_rows_in_month = drill_df[
+            drill_df.get("اسم المحفظ/ة", pd.Series(dtype=str))
+            .astype(str).str.strip() == sel_drill.strip()
+        ] if not drill_df.empty else pd.DataFrame()
+
+        st.markdown(f"""
+        <div class="insight-box insight-gold" style="margin-bottom:1rem;">
+            👩‍🏫 <b>{sel_drill}</b> &nbsp;|&nbsp;
+            📅 <b>الشهر:</b> {month_label} &nbsp;|&nbsp;
+            👨‍🎓 <b>عدد الطلاب:</b> {len(teacher_rows_in_month)}
+        </div>
+        """, unsafe_allow_html=True)
 
         d1, d2, d3, d4 = st.columns(4)
-        with d1: st.markdown(kpi_card("⏰", f"{hours_d:.2f}",           "ساعات العمل الفعلية",        "sapphire"), unsafe_allow_html=True)
-        with d2: st.markdown(kpi_card("💵", f"{rate_d:.0f} ج.م",        "سعر الساعة",                 "gold"),     unsafe_allow_html=True)
-        with d3: st.markdown(kpi_card("💰", fmt_currency(salary_d),     "الراتب المستحق",              "emerald"),  unsafe_allow_html=True)
-        with d4: st.markdown(kpi_card("📲", fmt_currency(cost_with_fee_d),"إجمالي التحويل (فودافون)", "amber"),    unsafe_allow_html=True)
+        with d1: st.markdown(kpi_card("⏰", f"{hours_d:.2f}",            "ساعات العمل الفعلية",        "sapphire"), unsafe_allow_html=True)
+        with d2: st.markdown(kpi_card("💵", f"{rate_d:.0f} ج.م",         "سعر الساعة",                 "gold"),     unsafe_allow_html=True)
+        with d3: st.markdown(kpi_card("💰", fmt_currency(salary_d),      "الراتب المستحق",              "emerald"),  unsafe_allow_html=True)
+        with d4: st.markdown(kpi_card("📲", fmt_currency(cost_with_fee_d),"إجمالي التحويل (فودافون)",  "amber"),    unsafe_allow_html=True)
 
         if not breakdown_df.empty:
             st.markdown(f"""
-            <div class="insight-box insight-gold" style="margin-top:1rem;">
-                <b>📐 تفصيل الحساب لـ {sel_drill}:</b><br>
+            <div class="insight-box insight-teal" style="margin-top:1rem;">
+                <b>📐 تفصيل الحساب لـ {sel_drill} — {month_label}:</b><br>
                 لكل طالب: <b>الحصص الفعلية × مدة الحصة (ساعة) × {rate_d:.0f} ج.م</b><br>
                 💳 <b>رسوم فودافون كاش (1%):</b> {fmt_currency(fee_amount_d)}
                 &nbsp;|&nbsp;
                 📲 <b>إجمالي التحويل:</b> {fmt_currency(cost_with_fee_d)}
             </div>
             """, unsafe_allow_html=True)
-            display_table(breakdown_df, title=f"تفصيل راتب {sel_drill}", download_name=f"راتب_{sel_drill}.csv")
+            display_table(
+                breakdown_df,
+                title=f"تفصيل راتب {sel_drill} — {month_label}",
+                download_name=f"راتب_{sel_drill}_{month_label}.csv"
+            )
+        else:
+            st.warning(f"⚠️ لا توجد بيانات لـ {sel_drill} في {month_label}")
 
     st.markdown("---")
     st.markdown(section_header("مستحقات الطلاب", "ما يجب أن يدفعه كل طالب نشط هذا الشهر", "🧾"), unsafe_allow_html=True)
