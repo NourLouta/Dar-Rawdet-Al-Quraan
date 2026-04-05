@@ -659,8 +659,14 @@ with st.sidebar.expander("🔧 تشخيص البيانات", expanded=True):
 # ================================
 
 # ── Sidebar filter state (initialized once) ──────────────────────────────────
-if "sel_month" not in st.session_state:
-    st.session_state["sel_month"] = "الكل"
+if "date_filter_mode" not in st.session_state:
+    st.session_state["date_filter_mode"] = "الكل"   # "الكل" | "شهر" | "نطاق"
+if "sel_month_year" not in st.session_state:
+    st.session_state["sel_month_year"] = (datetime.now().month, datetime.now().year)
+if "sel_date_from" not in st.session_state:
+    st.session_state["sel_date_from"] = date(datetime.now().year, datetime.now().month, 1)
+if "sel_date_to" not in st.session_state:
+    st.session_state["sel_date_to"] = date.today()
 if "sel_teacher_filter" not in st.session_state:
     st.session_state["sel_teacher_filter"] = "الكل"
 if "sel_status_filter" not in st.session_state:
@@ -869,29 +875,69 @@ def get_teacher_schedule(teacher_name, df):
 
 # ── Apply global sidebar filters to students_df ───────────────────────────────
 def apply_global_filters(df):
-    """Apply sidebar month + teacher + status filters."""
+    """Apply sidebar date + teacher + status filters to any student DataFrame."""
     if df.empty:
         return df
     filtered = df.copy()
 
-    # Month filter on تاريخ آخر تجديد
-    sel_m = st.session_state.get("sel_month", "الكل")
-    if sel_m != "الكل" and "تاريخ آخر تجديد" in filtered.columns:
-        filtered = filtered[
-            filtered["تاريخ آخر تجديد"].astype(str).str.contains(sel_m, na=False)
-        ]
+    date_mode = st.session_state.get("date_filter_mode", "الكل")
 
-    # Teacher filter
+    # ── Month filter ──────────────────────────────────────────────────────────
+    if date_mode == "اختيار شهر" and "تاريخ آخر تجديد" in filtered.columns:
+        sel_m, sel_y = st.session_state.get("sel_month_year", (datetime.now().month, datetime.now().year))
+
+        def matches_month_year(val):
+            s = str(val).strip()
+            if not s or s in ("nan", "NaN", "None", "—"):
+                return False
+            # Try parsing common formats
+            for fmt in ("%m/%Y", "%m-%Y", "%d/%m/%Y", "%d-%m-%Y",
+                        "%Y-%m-%d", "%m/%d/%Y", "%d-%m-%y", "%m-%d-%y"):
+                try:
+                    d = datetime.strptime(s, fmt)
+                    return d.month == sel_m and d.year == sel_y
+                except ValueError:
+                    pass
+            # Fallback: check if both month and year appear as substrings
+            y2 = str(sel_y)[-2:]  # e.g. "26" from 2026
+            return (f"{sel_m:02d}" in s or f"/{sel_m}/" in s) and (y2 in s or str(sel_y) in s)
+
+        mask = filtered["تاريخ آخر تجديد"].apply(matches_month_year)
+        filtered = filtered[mask]
+
+    # ── Date range filter ─────────────────────────────────────────────────────
+    elif date_mode == "نطاق مخصص" and "تاريخ آخر تجديد" in filtered.columns:
+        sel_from = st.session_state.get("sel_date_from", date(2020, 1, 1))
+        sel_to   = st.session_state.get("sel_date_to",   date.today())
+
+        def in_date_range(val):
+            s = str(val).strip()
+            if not s or s in ("nan", "NaN", "None", "—"):
+                return False
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%m/%d/%Y",
+                        "%d-%m-%y", "%m-%d-%y", "%m/%Y", "%m-%Y"):
+                try:
+                    d = datetime.strptime(s, fmt).date()
+                    return sel_from <= d <= sel_to
+                except ValueError:
+                    pass
+            return False
+
+        mask = filtered["تاريخ آخر تجديد"].apply(in_date_range)
+        filtered = filtered[mask]
+
+    # ── Teacher filter ────────────────────────────────────────────────────────
     sel_tf = st.session_state.get("sel_teacher_filter", "الكل")
     if sel_tf != "الكل" and "اسم المحفظ/ة" in filtered.columns:
         filtered = filtered[filtered["اسم المحفظ/ة"].astype(str).str.strip() == sel_tf]
 
-    # Status filter
+    # ── Status filter ─────────────────────────────────────────────────────────
     sel_sf = st.session_state.get("sel_status_filter", "الكل")
     if sel_sf != "الكل" and "حالة الاشتراك" in filtered.columns:
         filtered = filtered[filtered["حالة الاشتراك"].str.contains(sel_sf, na=False)]
 
     return filtered
+
 
 # ================================
 # 🧩 UI COMPONENTS
@@ -1024,29 +1070,86 @@ def render_sidebar():
         margin:0.8rem 0 0.4rem;direction:rtl;">🔽 فلاتر عامة</div>
     """, unsafe_allow_html=True)
 
-    # Month filter — extract unique months from تاريخ آخر تجديد
-    month_options = ["الكل"]
-    if not students_df.empty and "تاريخ آخر تجديد" in students_df.columns:
-        raw_dates = students_df["تاريخ آخر تجديد"].dropna().astype(str)
-        # Extract MM-YY or YYYY patterns
-        months_found = set()
-        for d in raw_dates:
-            # match patterns like 03-08-26 → "03" or 2026-03 → "03"
-            m = re.search(r'(\d{1,2})[/-](\d{2,4})', d)
-            if m:
-                months_found.add(m.group(0)[:7])  # keep first 7 chars
-        month_options += sorted(months_found, reverse=True)
-
-    sel_month = st.sidebar.selectbox(
-        "📅 الشهر",
-        month_options,
-        index=month_options.index(st.session_state["sel_month"])
-              if st.session_state["sel_month"] in month_options else 0,
-        key="sb_month"
+    # ── Date Filter Mode ──────────────────────────────────────────────────────
+    date_mode = st.sidebar.radio(
+        "📅 فلتر التاريخ",
+        options=["الكل", "اختيار شهر", "نطاق مخصص"],
+        index=["الكل", "اختيار شهر", "نطاق مخصص"].index(
+            st.session_state.get("date_filter_mode", "الكل")
+        ),
+        key="sb_date_mode",
+        horizontal=False,
     )
-    st.session_state["sel_month"] = sel_month
+    st.session_state["date_filter_mode"] = date_mode
 
-    # Teacher filter
+    # ── Month Picker (Year + Month selects) ───────────────────────────────────
+    if date_mode == "اختيار شهر":
+        ARABIC_MONTHS = {
+            1: "يناير", 2: "فبراير", 3: "مارس",    4: "أبريل",
+            5: "مايو",  6: "يونيو",  7: "يوليو",   8: "أغسطس",
+            9: "سبتمبر",10:"أكتوبر",11: "نوفمبر",  12: "ديسمبر",
+        }
+        current_m, current_y = st.session_state["sel_month_year"]
+
+        col_m, col_y = st.sidebar.columns(2)
+        with col_m:
+            sel_m = st.selectbox(
+                "الشهر",
+                options=list(ARABIC_MONTHS.keys()),
+                format_func=lambda x: ARABIC_MONTHS[x],
+                index=current_m - 1,
+                key="sb_month_num",
+            )
+        with col_y:
+            year_opts = list(range(2023, datetime.now().year + 2))
+            sel_y = st.selectbox(
+                "السنة",
+                options=year_opts,
+                index=year_opts.index(current_y) if current_y in year_opts else 0,
+                key="sb_year_num",
+            )
+        st.session_state["sel_month_year"] = (sel_m, sel_y)
+
+        # Show active filter badge
+        st.sidebar.markdown(f"""
+        <div style="background:rgba(201,168,76,0.2);border:1px solid {T.GOLD};
+            border-radius:8px;padding:0.4rem 0.7rem;margin-top:0.3rem;
+            color:{T.GOLD_LIGHT};font-size:0.78rem;font-weight:700;direction:rtl;">
+            🗓️ الفلتر النشط: {ARABIC_MONTHS[sel_m]} {sel_y}
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Custom Date Range ─────────────────────────────────────────────────────
+    elif date_mode == "نطاق مخصص":
+        sel_from = st.sidebar.date_input(
+            "📆 من تاريخ",
+            value=st.session_state["sel_date_from"],
+            key="sb_date_from",
+            format="YYYY/MM/DD",
+        )
+        sel_to = st.sidebar.date_input(
+            "📆 إلى تاريخ",
+            value=st.session_state["sel_date_to"],
+            key="sb_date_to",
+            format="YYYY/MM/DD",
+        )
+        # Validate range
+        if sel_from > sel_to:
+            st.sidebar.warning("⚠️ تاريخ البداية يجب أن يكون قبل تاريخ النهاية")
+            sel_from, sel_to = sel_to, sel_from
+
+        st.session_state["sel_date_from"] = sel_from
+        st.session_state["sel_date_to"]   = sel_to
+
+        st.sidebar.markdown(f"""
+        <div style="background:rgba(59,130,246,0.15);border:1px solid {T.ACCENT_SAPPHIRE};
+            border-radius:8px;padding:0.4rem 0.7rem;margin-top:0.3rem;
+            color:rgba(255,255,255,0.9);font-size:0.78rem;font-weight:700;direction:rtl;">
+            📅 {sel_from.strftime('%Y/%m/%d')} → {sel_to.strftime('%Y/%m/%d')}
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Teacher Filter ────────────────────────────────────────────────────────
     teacher_opts = ["الكل"]
     if not teachers_df.empty and "الاسم" in teachers_df.columns:
         teacher_opts += sorted(teachers_df["الاسم"].dropna().unique().tolist())
@@ -1056,24 +1159,27 @@ def render_sidebar():
         teacher_opts,
         index=teacher_opts.index(st.session_state["sel_teacher_filter"])
               if st.session_state["sel_teacher_filter"] in teacher_opts else 0,
-        key="sb_teacher"
+        key="sb_teacher",
     )
     st.session_state["sel_teacher_filter"] = sel_tf
 
-    # Status filter
+    # ── Status Filter ─────────────────────────────────────────────────────────
     status_opts = ["الكل", "نشط", "تجميد مؤقت", "موقوف"]
     sel_sf = st.sidebar.selectbox(
         "📌 حالة الاشتراك",
         status_opts,
         index=status_opts.index(st.session_state["sel_status_filter"])
               if st.session_state["sel_status_filter"] in status_opts else 0,
-        key="sb_status"
+        key="sb_status",
     )
     st.session_state["sel_status_filter"] = sel_sf
 
-    # Reset filters button
+    # ── Reset Button ──────────────────────────────────────────────────────────
     if st.sidebar.button("🔁 إعادة ضبط الفلاتر", use_container_width=True):
-        st.session_state["sel_month"]          = "الكل"
+        st.session_state["date_filter_mode"]   = "الكل"
+        st.session_state["sel_month_year"]     = (datetime.now().month, datetime.now().year)
+        st.session_state["sel_date_from"]      = date(datetime.now().year, datetime.now().month, 1)
+        st.session_state["sel_date_to"]        = date.today()
         st.session_state["sel_teacher_filter"] = "الكل"
         st.session_state["sel_status_filter"]  = "الكل"
         st.rerun()
