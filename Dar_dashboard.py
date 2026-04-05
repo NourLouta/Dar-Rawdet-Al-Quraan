@@ -712,22 +712,28 @@ def compute_student_teacher_cost(row):
       duration_hrs = مدة الحصة (ساعة)   [fallback: دقائق/60]
       cost = net_sessions × duration_hrs × سعر الساعة (from teacher sheet)
     """
-    total_sessions    = pd.to_numeric(row.get("عدد الحصص الشهرية", 0),  errors="coerce") or 0
-    cancelled         = pd.to_numeric(row.get("عدد الحصص الملغية", 0),  errors="coerce") or 0
-    net_sessions      = max(0, total_sessions - cancelled)
+    # ── Safe numeric helper — always returns a clean float, never NaN ────────
+    def safe_num(val, default=0.0):
+        result = pd.to_numeric(val, errors="coerce")
+        return float(default) if (result is None or pd.isna(result)) else float(result)
+
+    total_sessions = safe_num(row.get("عدد الحصص الشهرية",  0))
+    cancelled      = safe_num(row.get("عدد الحصص الملغية",  0))
+    net_sessions   = max(0.0, total_sessions - cancelled)
 
     # Duration: prefer ساعة column, fallback to دقائق/60
-    duration_hr = pd.to_numeric(row.get("مدة الحصة (ساعة)", np.nan), errors="coerce")
-    if pd.isna(duration_hr) or duration_hr == 0:
-        duration_min = pd.to_numeric(row.get("مدة الحصة (دقائق)", 0), errors="coerce") or 0
-        duration_hr  = duration_min / 60
+    duration_hr = safe_num(row.get("مدة الحصة (ساعة)", 0))
+    if duration_hr == 0:
+        duration_min = safe_num(row.get("مدة الحصة (دقائق)", 0))
+        duration_hr  = duration_min / 60.0
 
     teacher_name = str(row.get("اسم المحفظ/ة", "")).strip()
     rate         = get_teacher_rate(teacher_name)
 
     cost = round(net_sessions * duration_hr * rate, 2)
+
     return {
-        "net_sessions":  int(net_sessions),
+        "net_sessions":   int(net_sessions),
         "total_sessions": int(total_sessions),
         "cancelled":      int(cancelled),
         "duration_hr":    round(duration_hr, 4),
