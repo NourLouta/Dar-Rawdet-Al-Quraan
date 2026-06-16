@@ -36,25 +36,43 @@ streamlit run app.py
 - **وضع التجربة دون اتصال:** لو وُجد ملف `data/قاعدة_البيانات.xlsx` يقرأ منه النظام
   تلقائيًا (نسخة من ملف Google). مفيد للعرض والتدريب. أو حدّد مسارًا عبر متغيّر
   البيئة `DAR_LOCAL_XLSX`.
-- في هذا الوضع تعمل كل الشاشات والتقارير، لكن **الحفظ معطّل** (قراءة فقط) حتى تُفعّل
-  حساب الخدمة (الخطوة 3).
+- في هذا الوضع تعمل كل الشاشات والتقارير، لكن **الحفظ في Google معطّل** (قراءة فقط)
+  حتى تُفعّل إحدى طريقتي الكتابة في الخطوة 3.
 
 ---
 
-## 3) تفعيل الحفظ المباشر في Google Sheets (مرة واحدة، مجاني)
+## 3) تفعيل الحفظ المباشر في Google Sheets
 
-1. ادخل <https://console.cloud.google.com> → أنشئ مشروعًا مجانيًا.
-2. فعّل **Google Sheets API** و **Google Drive API**.
-3. **Credentials → Create Credentials → Service Account** → أنشئ حسابًا.
-4. من الحساب → **Keys → Add Key → JSON** → نزّل ملف المفتاح.
-5. انسخ `.streamlit/secrets.toml.example` إلى `.streamlit/secrets.toml` واملأ قسم
-   `[gcp_service_account]` من ملف JSON (خصوصًا `client_email` و `private_key`).
-6. افتح ملف Google الجديد → **مشاركة (Share)** → أضف `client_email` (إيميل حساب
-   الخدمة) كـ **محرّر (Editor)**.
-7. شغّل التطبيق — سيظهر "✅ متصل (حفظ مباشر)" في الشريط الجانبي.
+يدعم النظام طريقتين للكتابة — اختر واحدة. القراءة تعمل دائمًا عبر رابط CSV العام.
 
-> أثناء التطوير المحلي احذف/أعد تسمية `data/قاعدة_البيانات.xlsx` كي يقرأ التطبيق
-> من Google مباشرة بدل الملف المحلي.
+### 3-أ) ✅ الطريقة المجانية المُوصى بها — Google Apps Script (بدون بطاقة، بدون Google Cloud)
+
+1. افتح ورقتك على Google Sheets → **Extensions ▸ Apps Script**.
+2. احذف الكود الموجود والصق محتوى الملف `apps_script/Code.gs` (من المستودع).
+3. في السطر الأول غيّر `TOKEN` إلى كلمة سر من اختيارك، ثم **احفظ**.
+4. **Deploy ▸ New deployment ▸ ⚙️ ▸ Web app**:
+   - *Execute as:* **Me**  |  *Who has access:* **Anyone** → **Deploy**.
+   - عند ظهور "Google hasn't verified" (طبيعي لكودك): **Advanced ▸ Go to … ▸ Allow**.
+5. انسخ **Web app URL** (ينتهي بـ `/exec`).
+6. ضع الرابط ونفس الرمز في إعدادات Streamlit (Secrets) أو `.streamlit/secrets.toml`:
+   ```toml
+   [apps_script]
+   url   = "https://script.google.com/macros/s/XXXX/exec"
+   token = "نفس الرمز من Code.gs"
+   ```
+7. شغّل/أعد تشغيل التطبيق — يظهر "✅ Google (حفظ مباشر)" في الشريط الجانبي.
+
+### 3-ب) بديل — حساب خدمة Google (Service Account)
+
+> ملاحظة: هذه الطريقة قد تطلب تفعيل فوترة/بطاقة في بعض الحسابات؛ استخدم 3-أ لتجنّبها.
+
+1. <https://console.cloud.google.com> → مشروع جديد → فعّل **Google Sheets API** و **Drive API**.
+2. **Credentials → Service Account → Keys → Add Key → JSON** → نزّل المفتاح.
+3. املأ `[gcp_service_account]` في `secrets.toml` من ملف JSON.
+4. شارك الورقة مع `client_email` كـ **محرّر (Editor)**.
+
+> أثناء التطوير المحلي احذف/أعد تسمية `data/قاعدة_البيانات.xlsx` كي يكتب التطبيق
+> في Google مباشرة بدل الملف المحلي.
 
 ---
 
