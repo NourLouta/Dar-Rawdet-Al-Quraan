@@ -58,14 +58,30 @@ function ensureHeaders_(sh, want) {
   return hdr;
 }
 
+// أول صف فارغ في عمود الكود (العمود الأول) — يتجاهل صفوف القوالب/الصيغ السفلية
+// (مثل صيغة العمر) فتظهر السجلات الجديدة مباشرة أسفل البيانات لا في آخر الورقة.
+function firstEmptyKeyRow_(sh) {
+  var n = sh.getLastRow();
+  if (n < 1) return 2;
+  var vals = sh.getRange(1, 1, n, 1).getValues();
+  for (var r = 1; r < vals.length; r++) {
+    if (String(vals[r][0]).trim() === '') return r + 1;
+  }
+  return n + 1;
+}
+
 function append_(ss, body) {
   var sh = getSheet_(ss, body.sheet, body.headers || []);
   var hdr = ensureHeaders_(sh, body.headers || (body.rows[0] ? Object.keys(body.rows[0]) : []));
   var rows = (body.rows || []).map(function (r) {
     return hdr.map(function (h) { return r[h] !== undefined && r[h] !== null ? r[h] : ''; });
   });
-  if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, hdr.length).setValues(rows);
-  return out({ ok: true, added: rows.length });
+  if (rows.length) {
+    var start = firstEmptyKeyRow_(sh);
+    sh.getRange(start, 1, rows.length, hdr.length).setValues(rows);
+    return out({ ok: true, added: rows.length, atRow: start });
+  }
+  return out({ ok: true, added: 0 });
 }
 
 function update_(ss, body) {
