@@ -95,14 +95,25 @@ def get_client():
         return None
 
 
+def get_script():
+    """رابط + رمز Google Apps Script (طريقة الكتابة المجانية بلا حساب خدمة)."""
+    s = _secrets()
+    try:
+        return s["apps_script"]["url"], s["apps_script"].get("token", "")
+    except Exception:
+        return None, None
+
+
 def can_write() -> bool:
-    """يمكن الحفظ عبر Google (حساب خدمة) أو في ملف xlsx محلي (وضع التجربة)."""
-    return get_client() is not None or config.LOCAL_XLSX is not None
+    """الحفظ متاح عبر: حساب خدمة Google، أو Apps Script، أو ملف xlsx محلي."""
+    return write_target() != "none"
 
 
 def write_target() -> str:
     if get_client() is not None:
         return "google"
+    if get_script()[0]:
+        return "script"
     if config.LOCAL_XLSX is not None:
         return "local"
     return "none"
@@ -296,6 +307,32 @@ def _local_headers(ws, hdr_key) -> list[str]:
     return headers
 
 
+# ── Google Apps Script (كتابة مجانية عبر HTTP) ───────────────────────────────
+def _script_post(payload: dict) -> dict:
+    import json
+    import urllib.request
+    url, token = get_script()
+    if not url:
+        raise WriteError("لا يوجد رابط Apps Script في الإعدادات.")
+    payload = dict(payload)
+    payload["token"] = token or ""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+    except Exception as e:
+        raise WriteError(f"تعذّر الاتصال بـ Apps Script: {e}")
+    try:
+        res = json.loads(body)
+    except Exception:
+        raise WriteError("رد غير متوقع من Apps Script (تحقق من النشر والصلاحيات).")
+    if not res.get("ok"):
+        raise WriteError(f"Apps Script: {res.get('error')}")
+    return res
+
+
 def _full_headers(key: str, existing: list[str], sample_keys) -> list[str]:
     """دمج الأعمدة الموجودة مع أعمدة المخطط ومفاتيح البيانات (تُضاف الناقصة في النهاية)."""
     out = [h for h in existing if h]
@@ -389,9 +426,15 @@ def append_rows(key: str, rows: list[dict]) -> int:
         matrix = [[_fmt(r.get(h, "")) for h in headers] for r in rows]
         ws.append_rows(matrix, value_input_option="USER_ENTERED")
         return len(matrix)
+    if tgt == "script":
+        headers = _full_headers(key, [], rows[0].keys())
+        payload_rows = [{h: _fmt(r.get(h, "")) for h in headers} for r in rows]
+        res = _script_post({"action": "append", "sheet": WS_MAP[key][0],
+                            "headers": headers, "rows": payload_rows})
+        return int(res.get("added", len(rows)))
     if tgt == "local":
         return _local_append(key, rows)
-    raise WriteError("لا يوجد مصدر كتابة (لا حساب Google ولا ملف محلي).")
+    raise WriteError("لا يوجد مصدر كتابة (لا Google ولا Apps Script ولا ملف محلي).")
 
 
 def update_row_by_code(key: str, code_col: str, code_val: str, updates: dict) -> bool:
@@ -411,6 +454,11 @@ def update_row_by_code(key: str, code_col: str, code_val: str, updates: dict) ->
             if col in headers:
                 ws.update_cell(cell.row, headers.index(col) + 1, _fmt(val))
         return True
+    if tgt == "script":
+        res = _script_post({"action": "update", "sheet": WS_MAP[key][0],
+                            "codeCol": code_col, "codeVal": str(code_val),
+                            "updates": {k: _fmt(v) for k, v in updates.items()}})
+        return bool(res.get("updated", False))
     if tgt == "local":
         return _local_update(key, code_col, code_val, updates)
     raise WriteError("لا يوجد مصدر كتابة.")
@@ -431,6 +479,10 @@ def delete_row_by_code(key: str, code_col: str, code_val: str) -> bool:
             return False
         ws.delete_rows(cell.row)
         return True
+    if tgt == "script":
+        res = _script_post({"action": "delete", "sheet": WS_MAP[key][0],
+                            "codeCol": code_col, "codeVal": str(code_val)})
+        return bool(res.get("deleted", False))
     if tgt == "local":
         return _local_delete(key, code_col, code_val)
     raise WriteError("لا يوجد مصدر كتابة.")

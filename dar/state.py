@@ -48,6 +48,9 @@ def write_banner():
     if tgt == "google":
         st.success("✅ متصل بـ Google Sheets — الإدخال يُحفظ مباشرة في الملف.", icon="✅")
         return True
+    if tgt == "script":
+        st.success("✅ متصل بـ Google Sheets (عبر Apps Script) — الإدخال يُحفظ مباشرة.", icon="✅")
+        return True
     if tgt == "local":
         st.info("💾 وضع الحفظ المحلي: يُحفظ الإدخال في ملف Excel المحلي (للتجربة). "
                 "لتفعيل الحفظ في Google Sheets راجع SETUP.md.", icon="💾")
