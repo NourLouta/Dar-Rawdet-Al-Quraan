@@ -62,7 +62,8 @@ def sidebar():
     n_students = len(data["students"])
     n_active = int(state.active_mask(data["students"]).sum())
     n_teachers = len(data["teachers"])
-    mode = "✅ متصل (حفظ مباشر)" if io.can_write() else "👁️ قراءة فقط"
+    _tgt = io.write_target()
+    mode = {"google": "✅ Google (حفظ مباشر)", "local": "💾 حفظ محلي (تجربة)"}.get(_tgt, "👁️ قراءة فقط")
     st.sidebar.markdown(f"""
     <div style="background:rgba(27,107,90,0.15);border:1px solid {T.PRIMARY};
         border-radius:{T.BORDER_RADIUS};padding:0.9rem;margin-top:0.6rem;">

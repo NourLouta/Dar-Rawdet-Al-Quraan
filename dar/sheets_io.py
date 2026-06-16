@@ -96,7 +96,16 @@ def get_client():
 
 
 def can_write() -> bool:
-    return get_client() is not None
+    """يمكن الحفظ عبر Google (حساب خدمة) أو في ملف xlsx محلي (وضع التجربة)."""
+    return get_client() is not None or config.LOCAL_XLSX is not None
+
+
+def write_target() -> str:
+    if get_client() is not None:
+        return "google"
+    if config.LOCAL_XLSX is not None:
+        return "local"
+    return "none"
 
 
 @lru_cache(maxsize=1)
@@ -239,21 +248,21 @@ def next_code(kind: str, existing_df: pd.DataFrame, code_col: str) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 📤 الكتابة (gspread فقط)
+# 📤 الكتابة — عبر gspread (Google) أو ملف xlsx محلي (نفس واجهة الاستدعاء)
 # ════════════════════════════════════════════════════════════════════════════
 class WriteError(RuntimeError):
     pass
 
 
+# ── gspread ──────────────────────────────────────────────────────────────────
 def _require_ws(key: str):
     ss = _spreadsheet()
     if ss is None:
-        raise WriteError("الكتابة تتطلب حساب خدمة Google مُعدًّا في الإعدادات (st.secrets).")
+        raise WriteError("الكتابة عبر Google تتطلب حساب خدمة مُعدًّا في الإعدادات.")
     ws_name, hdr_key = WS_MAP[key]
     try:
         return ss.worksheet(ws_name)
     except Exception:
-        # إنشاء الورقة لو لم تكن موجودة (للتقييمات الجديدة)
         headers = schema.HEADERS.get(hdr_key, [])
         ws = ss.add_worksheet(title=ws_name, rows=200, cols=max(10, len(headers) + 2))
         if headers:
@@ -265,46 +274,166 @@ def _header_row(ws) -> list[str]:
     return [str(c).strip() for c in ws.row_values(1)]
 
 
-def append_row(key: str, data: dict) -> None:
-    """إضافة صف جديد بمطابقة المفاتيح مع ترويسة الورقة."""
-    ws = _require_ws(key)
-    headers = _header_row(ws)
+# ── ملف محلي (openpyxl) ──────────────────────────────────────────────────────
+def _local_ws(wb, key: str):
+    """إرجاع ورقة من المصنّف المحلي، وإنشاؤها بالترويسة إن لم تكن موجودة."""
+    ws_name, hdr_key = WS_MAP[key]
+    if ws_name in wb.sheetnames:
+        return wb[ws_name]
+    ws = wb.create_sheet(title=ws_name)
+    for c, h in enumerate(schema.HEADERS.get(hdr_key, []), start=1):
+        ws.cell(row=1, column=c, value=h)
+    return ws
+
+
+def _local_headers(ws, hdr_key) -> list[str]:
+    headers = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    headers = [h for h in headers if h]
     if not headers:
-        headers = schema.HEADERS.get(WS_MAP[key][1], list(data.keys()))
-        ws.append_row(headers, value_input_option="USER_ENTERED")
-    row = [_fmt(data.get(h, "")) for h in headers]
-    ws.append_row(row, value_input_option="USER_ENTERED")
+        headers = schema.HEADERS.get(hdr_key, [])
+        for c, h in enumerate(headers, start=1):
+            ws.cell(row=1, column=c, value=h)
+    return headers
+
+
+def _full_headers(key: str, existing: list[str], sample_keys) -> list[str]:
+    """دمج الأعمدة الموجودة مع أعمدة المخطط ومفاتيح البيانات (تُضاف الناقصة في النهاية)."""
+    out = [h for h in existing if h]
+    for h in list(schema.HEADERS.get(WS_MAP[key][1], [])) + list(sample_keys):
+        if h and h not in out:
+            out.append(h)
+    return out
+
+
+def _local_append(key: str, rows: list[dict]) -> int:
+    import openpyxl
+    path = config.LOCAL_XLSX
+    wb = openpyxl.load_workbook(path)
+    ws = _local_ws(wb, key)
+    existing = _local_headers(ws, WS_MAP[key][1])
+    headers = _full_headers(key, existing, rows[0].keys())
+    # كتابة صف الترويسة كاملًا (يضيف الأعمدة الناقصة مثل النمط الأسبوعي)
+    for i, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=i, value=h)
+    for data in rows:
+        ws.append([_fmt(data.get(h, "")) for h in headers])
+    wb.save(path)
+    return len(rows)
+
+
+def _local_update(key: str, code_col: str, code_val: str, updates: dict) -> bool:
+    import openpyxl
+    path = config.LOCAL_XLSX
+    wb = openpyxl.load_workbook(path)
+    ws = _local_ws(wb, key)
+    headers = _local_headers(ws, WS_MAP[key][1])
+    if code_col not in headers:
+        raise WriteError(f"العمود '{code_col}' غير موجود في الورقة.")
+    ci = headers.index(code_col)
+    found = False
+    for r in range(2, ws.max_row + 1):
+        cell = ws.cell(row=r, column=ci + 1).value
+        if str(cell).strip() == str(code_val).strip():
+            for col, val in updates.items():
+                if col in headers:
+                    ws.cell(row=r, column=headers.index(col) + 1, value=_fmt(val))
+            found = True
+            break
+    if found:
+        wb.save(path)
+    return found
+
+
+def _local_delete(key: str, code_col: str, code_val: str) -> bool:
+    import openpyxl
+    path = config.LOCAL_XLSX
+    wb = openpyxl.load_workbook(path)
+    ws = _local_ws(wb, key)
+    headers = _local_headers(ws, WS_MAP[key][1])
+    if code_col not in headers:
+        return False
+    ci = headers.index(code_col)
+    for r in range(2, ws.max_row + 1):
+        if str(ws.cell(row=r, column=ci + 1).value).strip() == str(code_val).strip():
+            ws.delete_rows(r, 1)
+            wb.save(path)
+            return True
+    return False
+
+
+# ── واجهة موحّدة ──────────────────────────────────────────────────────────────
+def append_row(key: str, data: dict) -> None:
+    append_rows(key, [data])
 
 
 def append_rows(key: str, rows: list[dict]) -> int:
-    """إضافة عدة صفوف دفعة واحدة (أسرع). يُرجع عدد الصفوف المضافة."""
+    """إضافة صفوف (Google أو محلي حسب المتاح). يُرجع العدد المضاف."""
     if not rows:
         return 0
-    ws = _require_ws(key)
-    headers = _header_row(ws)
-    if not headers:
-        headers = schema.HEADERS.get(WS_MAP[key][1], list(rows[0].keys()))
-        ws.append_row(headers, value_input_option="USER_ENTERED")
-    matrix = [[_fmt(r.get(h, "")) for h in headers] for r in rows]
-    ws.append_rows(matrix, value_input_option="USER_ENTERED")
-    return len(matrix)
+    tgt = write_target()
+    if tgt == "google":
+        ws = _require_ws(key)
+        headers = _header_row(ws)
+        if not headers:
+            headers = schema.HEADERS.get(WS_MAP[key][1], list(rows[0].keys()))
+            ws.append_row(headers, value_input_option="USER_ENTERED")
+        full = _full_headers(key, headers, rows[0].keys())
+        if full != headers:
+            # إضافة الأعمدة الناقصة (مثل النمط الأسبوعي) إلى صف الترويسة
+            if ws.col_count < len(full):
+                ws.add_cols(len(full) - ws.col_count)
+            for i, h in enumerate(full):
+                if i >= len(headers):
+                    ws.update_cell(1, i + 1, h)
+            headers = full
+        matrix = [[_fmt(r.get(h, "")) for h in headers] for r in rows]
+        ws.append_rows(matrix, value_input_option="USER_ENTERED")
+        return len(matrix)
+    if tgt == "local":
+        return _local_append(key, rows)
+    raise WriteError("لا يوجد مصدر كتابة (لا حساب Google ولا ملف محلي).")
 
 
 def update_row_by_code(key: str, code_col: str, code_val: str, updates: dict) -> bool:
-    """تحديث صف مطابق للكود. يُرجع True عند النجاح."""
-    ws = _require_ws(key)
-    headers = _header_row(ws)
-    if code_col not in headers:
-        raise WriteError(f"العمود '{code_col}' غير موجود في الورقة.")
-    col_idx = headers.index(code_col) + 1
-    cell = ws.find(str(code_val), in_column=col_idx)
-    if cell is None:
-        return False
-    row_idx = cell.row
-    for col, val in updates.items():
-        if col in headers:
-            ws.update_cell(row_idx, headers.index(col) + 1, _fmt(val))
-    return True
+    """تحديث صف مطابق للكود (Google أو محلي). يُرجع True عند النجاح."""
+    tgt = write_target()
+    if tgt == "google":
+        ws = _require_ws(key)
+        headers = _header_row(ws)
+        if code_col not in headers:
+            raise WriteError(f"العمود '{code_col}' غير موجود في الورقة.")
+        col_idx = headers.index(code_col) + 1
+        import re as _re
+        cell = ws.find(_re.compile(rf"^{_re.escape(str(code_val))}$"), in_column=col_idx)
+        if cell is None:
+            return False
+        for col, val in updates.items():
+            if col in headers:
+                ws.update_cell(cell.row, headers.index(col) + 1, _fmt(val))
+        return True
+    if tgt == "local":
+        return _local_update(key, code_col, code_val, updates)
+    raise WriteError("لا يوجد مصدر كتابة.")
+
+
+def delete_row_by_code(key: str, code_col: str, code_val: str) -> bool:
+    """حذف صف مطابق للكود (Google أو محلي). يُرجع True عند النجاح."""
+    tgt = write_target()
+    if tgt == "google":
+        ws = _require_ws(key)
+        headers = _header_row(ws)
+        if code_col not in headers:
+            return False
+        import re as _re
+        cell = ws.find(_re.compile(rf"^{_re.escape(str(code_val))}$"),
+                       in_column=headers.index(code_col) + 1)
+        if cell is None:
+            return False
+        ws.delete_rows(cell.row)
+        return True
+    if tgt == "local":
+        return _local_delete(key, code_col, code_val)
+    raise WriteError("لا يوجد مصدر كتابة.")
 
 
 def _fmt(v) -> str:

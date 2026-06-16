@@ -44,13 +44,15 @@ def active_mask(df: pd.DataFrame, col=Student.STATUS):
 
 def write_banner():
     """تنبيه أعلى صفحات الإدخال يوضّح وضع الكتابة."""
-    if io.can_write():
+    tgt = io.write_target()
+    if tgt == "google":
         st.success("✅ متصل بـ Google Sheets — الإدخال يُحفظ مباشرة في الملف.", icon="✅")
-    else:
-        st.warning(
-            "⚠️ وضع القراءة فقط: لم يُضبط حساب خدمة Google بعد، لذا لا يمكن الحفظ. "
-            "راجع SETUP.md لتفعيل الحفظ. يمكنك تجربة كل الشاشات الآن دون حفظ.",
-            icon="⚠️",
-        )
-        return False
-    return True
+        return True
+    if tgt == "local":
+        st.info("💾 وضع الحفظ المحلي: يُحفظ الإدخال في ملف Excel المحلي (للتجربة). "
+                "لتفعيل الحفظ في Google Sheets راجع SETUP.md.", icon="💾")
+        return True
+    st.warning(
+        "⚠️ وضع القراءة فقط: لم يُضبط حساب خدمة Google ولا ملف محلي، فلا يمكن الحفظ. "
+        "راجع SETUP.md لتفعيل الحفظ.", icon="⚠️")
+    return False
