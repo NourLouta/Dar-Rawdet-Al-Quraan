@@ -1,1 +1,16 @@
+# أسرار
 .streamlit/secrets.toml
+
+# إعدادات Claude المحلية (خاصة بالجهاز)
+.claude/settings.local.json
+
+# بيانات محلية (لا تُرفع — بها بيانات الطلبة)
+data/
+*.xlsx
+
+# بايثون
+__pycache__/
+*.pyc
+.venv/
+venv/
+nohup.out
