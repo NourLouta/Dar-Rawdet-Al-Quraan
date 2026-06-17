@@ -79,6 +79,14 @@ def render():
                 if Session.TEACHER_NAME in sessions.columns else sessions.iloc[0:0]
             title = f"تقويم المحفظ — {name}"
             field = "student"
+        # رقم الهاتف للمشاركة عبر واتساب
+        phone = ""
+        if kind == "طالب":
+            row = students[students[Student.CODE] == code]
+            phone = row.iloc[0].get(Student.PARENT_PHONE, "") if not row.empty else ""
+        else:
+            row = teachers[teachers[Teacher.NAME] == name]
+            phone = row.iloc[0].get(Teacher.PHONE, "") if not row.empty else ""
         if not sel:
             st.info("لا توجد بيانات للاختيار.")
             return
@@ -86,7 +94,8 @@ def render():
             pdf = doc.monthly_calendar_pdf(month, sub, title, "الحصص الشهرية", show_field=field)
             st.download_button("⬇️ تحميل التقويم", pdf, file_name=f"{title}-{month}.pdf",
                                mime="application/pdf")
-            st.success("تم التوليد — اضغط تحميل.")
+            st.success("تم التوليد — اضغط تحميل ثم شارك.")
+            ui.whatsapp_button(phone, f"السلام عليكم، إليكم جدول حصص {title} لشهر {month} من دار روضة القرآن.")
 
     # ── تقرير طالب ──────────────────────────────────────────────────────────────
     with t_srep:

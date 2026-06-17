@@ -95,6 +95,7 @@ class Enrollment:
     WEEK_DAYS   = "أيام الأسبوع"
     SESS_TIME   = "وقت الحصة"
     SESS_MIN    = "مدة الحصة (دقيقة)"
+    DAY_SCHEDULE = "جدول الأيام"   # وقت/مدة مختلفة لكل يوم (اختياري)
 
 
 class Session:
@@ -147,7 +148,7 @@ HEADERS = {
     "enrollments": [getattr(Enrollment, a) for a in
         ("CODE","STUDENT_CODE","STUDENT_NAME","TEACHER_CODE","TEACHER_NAME",
          "STUDY_TYPE","START","END","SUB_VALUE","SESS_PRICE","STATUS","NOTES",
-         "WEEK_DAYS","SESS_TIME","SESS_MIN","DISPLAY")],
+         "WEEK_DAYS","SESS_TIME","SESS_MIN","DAY_SCHEDULE","DISPLAY")],
     "sessions": [getattr(Session, a) for a in
         ("CODE","ENROLL_CODE","STUDENT_CODE","STUDENT_NAME","TEACHER_CODE",
          "TEACHER_NAME","DATE","MONTH","START_TIME","END_TIME","DURATION","STATUS",
@@ -334,6 +335,38 @@ def parse_weekdays(s) -> list[str]:
 
 def weekday_to_pywd(day_ar: str):
     return _AR_DAY_TO_PYWD.get(day_ar)
+
+
+# ── جدول الأيام (وقت/مدة لكل يوم) ─────────────────────────────────────────────
+# الصيغة المخزّنة: "السبت@8:00 ص@60 ؛ الاثنين@5:00 م@30"
+_SCHED_DAY_SEP = " ؛ "
+_SCHED_FLD_SEP = "@"
+
+
+def format_day_schedule(items) -> str:
+    """items = [(day_ar, time_str, minutes), ...] → نص مخزّن."""
+    parts = []
+    for day, t, m in items:
+        if not day:
+            continue
+        parts.append(f"{day}{_SCHED_FLD_SEP}{t}{_SCHED_FLD_SEP}{int(m)}")
+    return _SCHED_DAY_SEP.join(parts)
+
+
+def parse_day_schedule(s):
+    """نص جدول الأيام → [(day_ar, time_str, minutes:int), ...]، مرتّبة بترتيب الأسبوع."""
+    out = []
+    if not s or str(s).strip().lower() in ("", "nan", "none"):
+        return out
+    txt = str(s).replace("؛", ";").replace("|", ";")
+    for part in txt.split(";"):
+        fields = [f.strip() for f in part.split(_SCHED_FLD_SEP)]
+        if len(fields) >= 3 and fields[0] in ARABIC_WEEKDAYS:
+            mins = normalize_digits(fields[2])
+            out.append((fields[0], fields[1], int(mins) if mins.isdigit() else 30))
+    # ترتيب حسب أيام الأسبوع
+    order = {d: i for i, d in enumerate(ARABIC_WEEKDAYS)}
+    return sorted(out, key=lambda x: order.get(x[0], 99))
 
 
 # ── حقول العرض "الكود — الاسم" ───────────────────────────────────────────────

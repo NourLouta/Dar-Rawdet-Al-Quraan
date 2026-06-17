@@ -258,6 +258,27 @@ def plotly_layout(fig, title="", height=400):
     return fig
 
 
+def whatsapp_url(phone, text: str) -> str | None:
+    """رابط واتساب (wa.me) برسالة مُعبّأة. يحوّل 01XXXXXXXXX → 20XXXXXXXXXX."""
+    from .schema import clean_phone
+    import urllib.parse
+    p = clean_phone(phone)
+    if not p:
+        return None
+    if p.startswith("0"):
+        p = "20" + p[1:]
+    return f"https://wa.me/{p}?text={urllib.parse.quote(text)}"
+
+
+def whatsapp_button(phone, text: str, label: str = "📲 إرسال عبر واتساب"):
+    url = whatsapp_url(phone, text)
+    if url:
+        st.link_button(label, url)
+        st.caption("سيفتح واتساب برسالة جاهزة — ثم أرفِق ملف الـPDF الذي حمّلته.")
+    else:
+        st.caption("لا يوجد رقم هاتف صالح لهذا الشخص لإرسال واتساب.")
+
+
 def status_badge(status: str) -> str:
     s = str(status)
     if "نشط" in s:

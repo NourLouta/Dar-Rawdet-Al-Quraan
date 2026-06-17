@@ -47,16 +47,37 @@ def _next_session_num(sessions_df: pd.DataFrame) -> int:
         return 1
 
 
+def _weekly_map(enr_row: dict) -> dict:
+    """
+    خريطة {رقم يوم بايثون: (وقت, دقائق)} للنمط الأسبوعي.
+    يفضّل «جدول الأيام» (وقت/مدة لكل يوم)، وإلا يستخدم وقتًا/مدة موحّدة لكل الأيام.
+    """
+    from ..schema import parse_day_schedule
+    sched = parse_day_schedule(enr_row.get(Enrollment.DAY_SCHEDULE, ""))
+    out = {}
+    if sched:
+        for day, t, m in sched:
+            wd = weekday_to_pywd(day)
+            if wd is not None:
+                out[wd] = (t, int(m))
+        return out
+    # احتياطي: وقت/مدة موحّدة
+    days = parse_weekdays(enr_row.get(Enrollment.WEEK_DAYS, ""))
+    minutes = int(state.num(enr_row.get(Enrollment.SESS_MIN), 30))
+    t = enr_row.get(Enrollment.SESS_TIME, "")
+    for d in days:
+        wd = weekday_to_pywd(d)
+        if wd is not None:
+            out[wd] = (t, minutes)
+    return out
+
+
 def generate_rows(enr_row: dict, year: int, month: int, default_status: str,
                   existing_keys: set, start_num: int):
-    """توليد صفوف حصص لتسجيل واحد في شهر معيّن حسب نمطه الأسبوعي."""
-    days = parse_weekdays(enr_row.get(Enrollment.WEEK_DAYS, ""))
-    if not days:
+    """توليد صفوف حصص لتسجيل واحد في شهر معيّن — يدعم وقتًا/مدة مختلفة لكل يوم."""
+    wmap = _weekly_map(enr_row)
+    if not wmap:
         return [], start_num
-    pywds = {weekday_to_pywd(d) for d in days}
-    minutes = int(state.num(enr_row.get(Enrollment.SESS_MIN), 30))
-    stime = parse_arabic_time(enr_row.get(Enrollment.SESS_TIME))
-    etime = add_minutes(stime, minutes) if stime else None
     e_code = str(enr_row.get(Enrollment.CODE, "")).strip()
     s_code = code_of(enr_row.get(Enrollment.STUDENT_CODE, "")) or ""
     s_name = enr_row.get(Enrollment.STUDENT_NAME, "")
@@ -68,10 +89,13 @@ def generate_rows(enr_row: dict, year: int, month: int, default_status: str,
     ndays = calendar.monthrange(year, month)[1]
     for day in range(1, ndays + 1):
         d = date(year, month, day)
-        if d.weekday() not in pywds:
+        if d.weekday() not in wmap:
             continue
         if (e_code, d.isoformat()) in existing_keys:
             continue
+        time_str, minutes = wmap[d.weekday()]
+        stime = parse_arabic_time(time_str)
+        etime = add_minutes(stime, minutes) if stime else None
         rows.append({
             Session.CODE: f"{prefix}{num:0{width}d}",
             Session.ENROLL_CODE: enr_row.get(Enrollment.DISPLAY) or e_code,
@@ -94,7 +118,9 @@ def render():
     ui.header("📅 الحصص والإدخال", "توليد جداول الحصص وتسجيل التقييمات دون تكرار")
     data = state.get_data()
     sessions, enroll = data["sessions"], data["enrollments"]
-    t_gen, t_roll, t_log = st.tabs(["⚡ توليد حصص تسجيل", "🔁 ترحيل شهري جماعي", "✍️ تسجيل/تقييم حصة"])
+    t_gen, t_roll, t_cancel, t_log = st.tabs([
+        "⚡ توليد حصص تسجيل", "🔁 ترحيل شهري جماعي",
+        "🗓️ إلغاء/تعديل حالات الحصص", "✍️ تسجيل/تقييم حصة"])
 
     today = date.today()
     statuses = state.lk("sess_status") or ["تمت"]
@@ -114,9 +140,14 @@ def render():
             year = c1.number_input("السنة", min_value=2024, max_value=2100, value=today.year)
             month = c2.selectbox("الشهر", list(range(1, 13)), index=today.month - 1)
             dflt = c3.selectbox("الحالة الافتراضية", statuses)
-            st.info(f"النمط: أيام [{enr.get(Enrollment.WEEK_DAYS,'—')}] | "
-                    f"الوقت {enr.get(Enrollment.SESS_TIME,'—')} | "
-                    f"{enr.get(Enrollment.SESS_MIN,'—')} دقيقة")
+            from ..schema import parse_day_schedule
+            _sched = parse_day_schedule(enr.get(Enrollment.DAY_SCHEDULE, ""))
+            if _sched:
+                st.info("الجدول: " + "، ".join(f"{d} {t} ({m}د)" for d, t, m in _sched))
+            else:
+                st.info(f"النمط: أيام [{enr.get(Enrollment.WEEK_DAYS,'—')}] | "
+                        f"الوقت {enr.get(Enrollment.SESS_TIME,'—')} | "
+                        f"{enr.get(Enrollment.SESS_MIN,'—')} دقيقة")
             preview, _ = generate_rows(enr, int(year), int(month), dflt,
                                        _existing_keys(sessions), _next_session_num(sessions))
             st.caption(f"سيتم توليد **{len(preview)}** حصة (مع تجاهل المكرر).")
@@ -167,6 +198,67 @@ def render():
                     st.success(msg)
                 except Exception as e:
                     st.error(f"تعذّر التوليد: {e}")
+
+    # ── إلغاء/تعديل حالات الحصص (تحرير جماعي سريع) ──────────────────────────────
+    with t_cancel:
+        can = state.write_banner()
+        if sessions.empty:
+            st.info("لا توجد حصص بعد.")
+        else:
+            months = state.months_available(sessions)
+            cc1, cc2 = st.columns(2)
+            mon = cc1.selectbox("الشهر", months, key="cancel_month")
+            sub = sessions[sessions[Session.MONTH].astype(str) == mon] if Session.MONTH in sessions.columns else sessions
+            names = ["الكل"] + sorted([n for n in sub[Session.STUDENT_NAME].dropna().unique() if str(n).strip()]) \
+                if Session.STUDENT_NAME in sub.columns else ["الكل"]
+            who = cc2.selectbox("الطالب", names, key="cancel_student")
+            if who != "الكل":
+                sub = sub[sub[Session.STUDENT_NAME] == who]
+            sub = sub.sort_values(Session.DATE) if Session.DATE in sub.columns else sub
+
+            if sub.empty:
+                st.info("لا توجد حصص مطابقة.")
+            else:
+                st.caption("غيّر «حالة الحصة» لأي صفوف (مثلاً: ملغية - طالب) ثم اضغط حفظ التغييرات. "
+                           "الحصص الملغية لا تُحتسب في الساعات أو الرواتب.")
+                view_cols = [Session.CODE, Session.DATE, Session.START_TIME,
+                             Session.STUDENT_NAME, Session.TEACHER_NAME,
+                             Session.STATUS, Session.CANCEL_RSN]
+                view_cols = [c for c in view_cols if c in sub.columns]
+                editable = sub[view_cols].copy().reset_index(drop=True)
+                orig = editable.copy()
+                edited = st.data_editor(
+                    editable, hide_index=True, use_container_width=True, height=420,
+                    key="cancel_editor",
+                    disabled=[Session.CODE, Session.DATE, Session.START_TIME,
+                              Session.STUDENT_NAME, Session.TEACHER_NAME],
+                    column_config={
+                        Session.STATUS: st.column_config.SelectboxColumn(
+                            Session.STATUS, options=statuses, width="medium"),
+                        Session.CANCEL_RSN: st.column_config.TextColumn(Session.CANCEL_RSN),
+                    },
+                )
+                if st.button("💾 حفظ التغييرات", disabled=not can):
+                    changed = 0
+                    for i in range(len(edited)):
+                        code = str(edited.iloc[i][Session.CODE])
+                        upd = {}
+                        if str(edited.iloc[i][Session.STATUS]) != str(orig.iloc[i][Session.STATUS]):
+                            upd[Session.STATUS] = edited.iloc[i][Session.STATUS]
+                        if (Session.CANCEL_RSN in edited.columns and
+                                str(edited.iloc[i][Session.CANCEL_RSN]) != str(orig.iloc[i][Session.CANCEL_RSN])):
+                            upd[Session.CANCEL_RSN] = edited.iloc[i][Session.CANCEL_RSN]
+                        if upd:
+                            try:
+                                io.update_row_by_code("sessions", Session.CODE, code, upd)
+                                changed += 1
+                            except Exception as e:
+                                st.error(f"تعذّر تحديث {code}: {e}")
+                    if changed:
+                        state.get_data(force=True)
+                        st.success(f"✅ تم تحديث {changed} حصة.")
+                    else:
+                        st.info("لا تغييرات لحفظها.")
 
     # ── تسجيل/تقييم حصة ────────────────────────────────────────────────────────
     with t_log:
