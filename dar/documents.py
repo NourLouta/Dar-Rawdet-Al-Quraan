@@ -302,17 +302,34 @@ def monthly_calendar_pdf(month_key: str, sessions_df: pd.DataFrame,
     head = [Paragraph(ar(d), S["cellhead"]) for d in reversed(ARABIC_WEEKDAYS)]
     grid = [head]
 
-    # بناء الأسابيع (يبدأ الأسبوع بالسبت)
+    # بناء الأسابيع (يبدأ الأسبوع بالسبت). ترتفع الخلية تلقائيًا لتسع كل الحصص.
     _cal.setfirstweekday(_cal.SATURDAY)
     weeks = _cal.monthcalendar(y, m)
+    import math as _math
+    col_w = 2.55 * cm
+    inner_w = col_w - 0.18 * cm
+    avail = inner_w - 0.12 * cm          # العرض المتاح للنص داخل الخلية
+    LINE = float(S["sess"].leading) / 72.0 * 2.54 * cm  # ارتفاع السطر الفعلي
+    SESS_PAD = 0.085 * cm                # هامش كل حصة (حشو الجدول الداخلي)
+    DAYNUM = 0.58 * cm                   # سطر رقم اليوم + هامش
+    BUFFER = 0.30 * cm                   # هامش أمان أسفل الخلية
+    MIN_ROW = 1.6 * cm                   # حد أدنى لارتفاع الأسبوع
+    row_heights = [0.7 * cm]             # ترويسة أيام الأسبوع
+
+    def _wrapped_lines(text: str) -> int:
+        w = pdfmetrics.stringWidth(text, FONT_REG, S["sess"].fontSize)
+        return max(1, int(_math.ceil(w / avail)))
+
     for week in weeks:
-        row = []
+        row, max_day_h = [], 0.0
         for day in week:  # day=0 يعني خارج الشهر
             if day == 0:
                 row.append("")
                 continue
+            day_sessions = by_day.get(day, [])
             parts = [Paragraph(ar(str(day)), S["daynum"])]
-            for sr in by_day.get(day, [])[:4]:
+            day_h = 0.0
+            for sr in day_sessions:        # كل الحصص بلا حدّ أقصى
                 tm = str(sr.get(Session.START_TIME, "") or "")
                 if show_field == "teacher":
                     label = str(sr.get(Session.TEACHER_NAME, "") or "")
@@ -321,11 +338,11 @@ def monthly_calendar_pdf(month_key: str, sessions_df: pd.DataFrame,
                 else:
                     label = str(sr.get(Session.STUDENT_NAME, "") or "")
                 txt = " · ".join([p for p in (tm, label) if p])
-                parts.append(Paragraph(ar(txt), S["sess"]))
-            extra = len(by_day.get(day, [])) - 4
-            if extra > 0:
-                parts.append(Paragraph(ar(f"+{extra}"), S["sess"]))
-            cellt = Table([[p] for p in parts], colWidths=[2.45 * cm])
+                shaped = ar(txt)
+                day_h += _wrapped_lines(shaped) * LINE + SESS_PAD
+                parts.append(Paragraph(shaped, S["sess"]))
+            max_day_h = max(max_day_h, day_h)
+            cellt = Table([[p] for p in parts], colWidths=[inner_w])
             cellt.setStyle(TableStyle([
                 ("TOPPADDING", (0, 0), (-1, -1), 1),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
@@ -333,10 +350,11 @@ def monthly_calendar_pdf(month_key: str, sessions_df: pd.DataFrame,
                 ("RIGHTPADDING", (0, 0), (-1, -1), 1),
             ]))
             row.append(cellt)
+        # ارتفاع الأسبوع = رقم اليوم + ارتفاع أكثر يوم ازدحامًا + هامش أمان
+        row_heights.append(max(MIN_ROW, DAYNUM + max_day_h + BUFFER))
         grid.append(list(reversed(row)))
 
-    tbl = Table(grid, colWidths=[2.55 * cm] * 7,
-                rowHeights=[0.7 * cm] + [2.5 * cm] * (len(grid) - 1))
+    tbl = Table(grid, colWidths=[col_w] * 7, rowHeights=row_heights)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_TEAL),
         ("GRID", (0, 0), (-1, -1), 0.6, colors.Color(*T.PDF_TEAL, alpha=0.35)),

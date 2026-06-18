@@ -270,13 +270,17 @@ def whatsapp_url(phone, text: str) -> str | None:
     return f"https://wa.me/{p}?text={urllib.parse.quote(text)}"
 
 
-def whatsapp_button(phone, text: str, label: str = "📲 إرسال عبر واتساب"):
+def whatsapp_button(phone, text: str, label: str = "📲 إرسال عبر واتساب",
+                    with_attachment_hint: bool = True):
     url = whatsapp_url(phone, text)
-    if url:
-        st.link_button(label, url)
+    if not url:
+        st.caption("لا يوجد رقم هاتف صالح لهذا الشخص لإرسال واتساب.")
+        return
+    st.link_button(label, url)
+    if with_attachment_hint:
         st.caption("سيفتح واتساب برسالة جاهزة — ثم أرفِق ملف الـPDF الذي حمّلته.")
     else:
-        st.caption("لا يوجد رقم هاتف صالح لهذا الشخص لإرسال واتساب.")
+        st.caption("الرسالة تتضمّن رابط التقويم (PDF) — يفتحه المستلم بنقرة، دون إرفاق يدوي.")
 
 
 def status_badge(status: str) -> str:
