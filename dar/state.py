@@ -5,7 +5,8 @@ import pandas as pd
 import streamlit as st
 
 from . import sheets_io as io
-from .schema import Session, Student
+from . import config
+from .schema import Session, Student, Program, Branch
 
 
 def get_data(force: bool = False) -> dict:
@@ -22,6 +23,68 @@ def get_lookups() -> dict:
 def lk(key: str, fallback=None) -> list:
     vals = get_lookups().get(key, [])
     return vals if vals else (fallback or [])
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# ⚙️ إعدادات قابلة للتعديل من التطبيق (البرامج والفروع)
+# ────────────────────────────────────────────────────────────────────────────
+def get_programs() -> pd.DataFrame:
+    """
+    ورقة البرامج وأسعارها. لو فارغة (أول استخدام)، تُرجَع بذور افتراضية للعرض فقط
+    (لا تُكتب في الشيت تلقائيًا — الإضافة الحقيقية تتم من شاشة الإعدادات).
+    """
+    df = get_data().get("programs")
+    if df is not None and not df.empty:
+        return df
+    seed = [{Program.CODE: f"PR-{i+1:02d}", Program.NAME: name,
+            Program.STUDENT_RATE: sr, Program.TEACHER_RATE: (tr if tr is not None else "")}
+            for i, (name, (sr, tr)) in enumerate(config.SEED_PROGRAM_RATES.items())]
+    return pd.DataFrame(seed)
+
+
+def program_rate_map() -> dict:
+    """{اسم البرنامج: (سعر الطالب|None, سعر المحفظ|None)} من ورقة البرامج."""
+    df = get_programs()
+    out = {}
+    if df is None or df.empty:
+        return out
+    for _, r in df.iterrows():
+        name = str(r.get(Program.NAME, "")).strip()
+        if not name:
+            continue
+        sr = pd.to_numeric(r.get(Program.STUDENT_RATE), errors="coerce")
+        tr = pd.to_numeric(r.get(Program.TEACHER_RATE), errors="coerce")
+        out[name] = (float(sr) if pd.notna(sr) and sr > 0 else None,
+                     float(tr) if pd.notna(tr) and tr > 0 else None)
+    return out
+
+
+def get_branches() -> pd.DataFrame:
+    """ورقة الفروع؛ بذور افتراضية للعرض إن كانت فارغة (أول استخدام)."""
+    df = get_data().get("branches")
+    if df is not None and not df.empty:
+        return df
+    seed = [{Branch.CODE: f"BR-{i+1:02d}", Branch.NAME: name}
+            for i, name in enumerate(config.SEED_BRANCHES)]
+    return pd.DataFrame(seed)
+
+
+def branch_names() -> list[str]:
+    df = get_branches()
+    if df is None or df.empty or Branch.NAME not in df.columns:
+        return list(config.SEED_BRANCHES)
+    return [n for n in df[Branch.NAME].astype(str).tolist() if n.strip()]
+
+
+def study_type_options() -> list[str]:
+    """
+    خيارات «نوع الدراسة» = برامج ورقة «البرامج» + القائمة المرجعية القديمة، مدمجة.
+    هذا يضمن أن أي برنامج جديد يُضاف من شاشة الإعدادات يظهر فورًا كخيار في كل
+    شاشات الإدخال، دون الحاجة لتحديث ورقة القوائم المرجعية يدويًا أيضًا.
+    """
+    programs = [n for n in program_rate_map().keys() if n]
+    legacy = lk("study_type")
+    return list(dict.fromkeys(programs + legacy))
 
 
 def num(v, default=0.0) -> float:

@@ -86,9 +86,15 @@ def teacher_hourly_rate(teacher_code_or_name: str, teachers_df: pd.DataFrame) ->
 # ────────────────────────────────────────────────────────────────────────────
 # 💵 حلّ الأسعار لكل حصة (حسب البرنامج/التسجيل مع إمكانية التعديل)
 # ────────────────────────────────────────────────────────────────────────────
-def program_rates(program: str):
-    """(سعر ساعة الطالب، سعر ساعة المحفظ) للبرنامج — أو (None, None)."""
-    return config.PROGRAM_RATES.get(str(program or "").strip(), (None, None))
+def program_rates(program: str, program_map: dict | None = None):
+    """
+    (سعر ساعة الطالب، سعر ساعة المحفظ) للبرنامج — أو (None, None).
+    program_map: {اسم البرنامج: (سعر الطالب, سعر المحفظ)} من ورقة «البرامج»
+    (عبر state.program_rate_map())؛ إن لم يُمرَّر يُستخدم بذر افتراضي ثابت
+    (للتوافق واختبارات الوحدة فقط — الواجهات يجب أن تمرّر الخريطة الحيّة دائمًا).
+    """
+    m = program_map if program_map is not None else config.SEED_PROGRAM_RATES
+    return m.get(str(program or "").strip(), (None, None))
 
 
 def _enroll_rate_map(enrollments) -> dict:
@@ -110,14 +116,14 @@ def _enroll_rate_map(enrollments) -> dict:
     return m
 
 
-def _resolve_rates(row, emap, teachers) -> tuple:
+def _resolve_rates(row, emap, teachers, program_map=None) -> tuple:
     """سعر ساعة الطالب والمحفظ لحصة: التسجيل ← البرنامج ← ملف المحفظين/الافتراضي."""
     ecode = code_of(row.get(Session.ENROLL_CODE, "")) if Session.ENROLL_CODE in row.index else ""
     sr = tr = None
     prog = ""
     if ecode and ecode in emap:
         sr, tr, prog = emap[ecode]
-    ps, pt = program_rates(prog)
+    ps, pt = program_rates(prog, program_map)
     if sr is None:
         sr = ps if ps is not None else STUDENT_HOURLY
     if tr is None:
@@ -126,7 +132,7 @@ def _resolve_rates(row, emap, teachers) -> tuple:
     return float(sr), float(tr)
 
 
-def _amounts(sessions_df, teachers, enrollments, month=None) -> pd.DataFrame:
+def _amounts(sessions_df, teachers, enrollments, month=None, program_map=None) -> pd.DataFrame:
     """يُرجع نسخة من الحصص بأعمدة: _done, _hours, _srate, _trate, _samt, _tamt."""
     df = sessions_df.copy() if sessions_df is not None else pd.DataFrame()
     if df.empty:
@@ -144,7 +150,7 @@ def _amounts(sessions_df, teachers, enrollments, month=None) -> pd.DataFrame:
     df["_hours"] = (dur / 60.0).where(done, 0.0).values
     srates, trates = [], []
     for _, r in df.iterrows():
-        s, t = _resolve_rates(r, emap, teachers)
+        s, t = _resolve_rates(r, emap, teachers, program_map)
         srates.append(s)
         trates.append(t)
     df["_srate"] = srates
@@ -159,9 +165,9 @@ def _amounts(sessions_df, teachers, enrollments, month=None) -> pd.DataFrame:
 # ────────────────────────────────────────────────────────────────────────────
 def teacher_salary(teacher_code: str, teacher_name: str, sessions_df: pd.DataFrame,
                    teachers_df: pd.DataFrame, month: str | None = None,
-                   enrollments=None) -> dict:
+                   enrollments=None, program_map=None) -> dict:
     """احتساب راتب معلم واحد (بأسعار كل تسجيل)."""
-    df = _amounts(sessions_df, teachers_df, enrollments, month=month)
+    df = _amounts(sessions_df, teachers_df, enrollments, month=month, program_map=program_map)
     if not df.empty:
         if teacher_code and Session.TEACHER_CODE in df.columns:
             df = df[df[Session.TEACHER_CODE].astype(str).str.strip() == str(teacher_code).strip()]
@@ -185,9 +191,9 @@ def teacher_salary(teacher_code: str, teacher_name: str, sessions_df: pd.DataFra
 
 
 def all_teacher_salaries(sessions_df: pd.DataFrame, teachers_df: pd.DataFrame,
-                         month: str | None = None, enrollments=None) -> pd.DataFrame:
+                         month: str | None = None, enrollments=None, program_map=None) -> pd.DataFrame:
     """كشف رواتب كل المعلمين (بأسعار كل تسجيل)."""
-    df = _amounts(sessions_df, teachers_df, enrollments, month=month)
+    df = _amounts(sessions_df, teachers_df, enrollments, month=month, program_map=program_map)
     if df.empty or (Session.TEACHER_CODE not in df.columns and Session.TEACHER_NAME not in df.columns):
         return pd.DataFrame()
     code = df[Session.TEACHER_CODE].astype(str).str.strip() if Session.TEACHER_CODE in df.columns else pd.Series("", index=df.index)
@@ -220,9 +226,9 @@ def all_teacher_salaries(sessions_df: pd.DataFrame, teachers_df: pd.DataFrame,
 # ────────────────────────────────────────────────────────────────────────────
 def student_revenue(student_code: str, sessions_df: pd.DataFrame,
                     rate: float = STUDENT_HOURLY, month: str | None = None,
-                    enrollments=None, teachers=None) -> dict:
+                    enrollments=None, teachers=None, program_map=None) -> dict:
     """إيراد طالب واحد = Σ (ساعات × سعر ساعته لكل تسجيل)."""
-    df = _amounts(sessions_df, teachers, enrollments, month=month)
+    df = _amounts(sessions_df, teachers, enrollments, month=month, program_map=program_map)
     if not df.empty and student_code and Session.STUDENT_CODE in df.columns:
         df = df[df[Session.STUDENT_CODE].astype(str).str.strip() == str(student_code).strip()]
     done = df[df["_done"]] if (not df.empty and "_done" in df.columns) else df
@@ -241,9 +247,9 @@ def student_revenue(student_code: str, sessions_df: pd.DataFrame,
 # ────────────────────────────────────────────────────────────────────────────
 def center_summary(sessions_df: pd.DataFrame, teachers_df: pd.DataFrame,
                    student_hourly: float = STUDENT_HOURLY,
-                   month: str | None = None, enrollments=None) -> dict:
+                   month: str | None = None, enrollments=None, program_map=None) -> dict:
     """ملخص مالي للمركز: الإيراد − مرتبات المحفظين = الربح (بأسعار كل تسجيل)."""
-    df = _amounts(sessions_df, teachers_df, enrollments, month=month)
+    df = _amounts(sessions_df, teachers_df, enrollments, month=month, program_map=program_map)
     if df is None or df.empty:
         total_hours, revenue = 0.0, 0.0
     else:
@@ -251,7 +257,7 @@ def center_summary(sessions_df: pd.DataFrame, teachers_df: pd.DataFrame,
         total_hours = float(done["_hours"].sum())
         revenue = round(float(done["_samt"].sum()), 2)
 
-    sal = all_teacher_salaries(sessions_df, teachers_df, month=month, enrollments=enrollments)
+    sal = all_teacher_salaries(sessions_df, teachers_df, month=month, enrollments=enrollments, program_map=program_map)
     total_base = float(sal["base_salary"].sum()) if not sal.empty else 0.0
     total_payout = float(sal["net_payout"].sum()) if not sal.empty else 0.0
 

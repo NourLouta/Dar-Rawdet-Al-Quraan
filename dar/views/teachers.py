@@ -31,7 +31,7 @@ def render():
         months = ["كل الشهور"] + state.months_available(sessions)
         month = st.selectbox("الشهر", months, key="t_perf_month")
         mf = None if month == "كل الشهور" else month
-        sal = fin.all_teacher_salaries(sessions, teachers, month=mf, enrollments=data["enrollments"])
+        sal = fin.all_teacher_salaries(sessions, teachers, month=mf, enrollments=data["enrollments"], program_map=state.program_rate_map())
         if sal.empty:
             st.info("لا توجد حصص لحساب الأداء.")
         else:

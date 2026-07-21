@@ -20,7 +20,7 @@ def _student_stats(s_code, sessions, students, teachers, pfb, month, enrollments
     done = int((sub[Session.STATUS].astype(str).str.strip() == "تمت").sum()) if Session.STATUS in sub.columns else 0
     cancelled = total - done
     hours = fin.completed_hours(sub)
-    rev = fin.student_revenue(str(s_code), sub, month=None, enrollments=enrollments, teachers=teachers)
+    rev = fin.student_revenue(str(s_code), sub, month=None, enrollments=enrollments, teachers=teachers, program_map=state.program_rate_map())
     # متوسط تقييم المحفظ
     avg_rating = "—"
     if Session.RATING in sub.columns:
@@ -138,7 +138,7 @@ def render():
         if st.button("📄 توليد تقرير المحفظ (PDF)"):
             trow = teachers[teachers[Teacher.CODE] == code]
             trow = trow.iloc[0].to_dict() if not trow.empty else {Teacher.CODE: code, Teacher.NAME: name}
-            sal = fin.teacher_salary(code, name, sessions, teachers, month, enrollments=enroll)
+            sal = fin.teacher_salary(code, name, sessions, teachers, month, enrollments=enroll, program_map=state.program_rate_map())
             # طلاب المحفظ في الشهر
             sub = sessions[(sessions[Session.TEACHER_NAME] == name)] \
                 if Session.TEACHER_NAME in sessions.columns else sessions.iloc[0:0]

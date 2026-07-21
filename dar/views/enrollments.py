@@ -16,8 +16,8 @@ from ..finance import teacher_hourly_rate, program_rates
 
 
 def _default_rates(study, t_code, teachers):
-    """أسعار البرنامج الافتراضية: الطالب من البرنامج، المحفظ من البرنامج أو ملف المحفظين."""
-    ps, pt = program_rates(study)
+    """أسعار البرنامج الافتراضية (من ورقة «البرامج» القابلة للتعديل من الإعدادات)."""
+    ps, pt = program_rates(study, state.program_rate_map())
     srate = ps if ps is not None else STUDENT_HOURLY
     trate = pt if pt is not None else teacher_hourly_rate(t_code, teachers)
     return float(srate), float(trate)
@@ -93,7 +93,7 @@ def render():
             s_lbl = c1.selectbox("الطالب *", [o[0] for o in s_opts], key="enr_student")
             t_lbl = c2.selectbox("المحفظ *", [o[0] for o in t_opts], key="enr_teacher")
             c3, c4, c5 = st.columns(3)
-            study = c3.selectbox("نوع الدراسة (البرنامج)", state.lk("study_type") or ["قرآن"], key="enr_study")
+            study = c3.selectbox("نوع الدراسة (البرنامج)", state.study_type_options() or ["قرآن"], key="enr_study")
             start = c4.date_input("تاريخ البداية", value=date.today(), format="YYYY-MM-DD", key="enr_start")
             status = c5.selectbox("حالة التسجيل", ["نشط", "موقوف", "منتهي"], key="enr_status")
 
@@ -149,7 +149,7 @@ def render():
             sel = st.selectbox("اختر التسجيل", [o[0] for o in opts], key="enr_edit_sel")
             row = enroll.loc[dict(opts)[sel]].to_dict()
             ecode = row.get(Enrollment.CODE, "")
-            study_opts = state.lk("study_type") or ["قرآن"]
+            study_opts = state.study_type_options() or ["قرآن"]
             cur_study = row.get(Enrollment.STUDY_TYPE, "") or study_opts[0]
 
             e1, e2 = st.columns(2)

@@ -21,7 +21,7 @@ def render():
     month = st.selectbox("📅 الشهر", months)
     mf = None if month == "كل الشهور" else month
 
-    cs = fin.center_summary(sessions, teachers, STUDENT_HOURLY, month=mf, enrollments=enroll)
+    cs = fin.center_summary(sessions, teachers, STUDENT_HOURLY, month=mf, enrollments=enroll, program_map=state.program_rate_map())
     ui.kpi_row([
         ("💰", ui.fmt_currency(cs["revenue"]), "إجمالي الإيرادات", "gold"),
         ("👛", ui.fmt_currency(cs["salaries_payout"]), "مرتبات المحفظين", "rose"),
@@ -50,7 +50,7 @@ def render():
         ))
         st.plotly_chart(ui.plotly_layout(fig, height=350), width='stretch')
 
-    sal = fin.all_teacher_salaries(sessions, teachers, month=mf, enrollments=enroll)
+    sal = fin.all_teacher_salaries(sessions, teachers, month=mf, enrollments=enroll, program_map=state.program_rate_map())
     with c2:
         ui.section("مرتبات المحفظين", icon="👩‍🏫")
         if not sal.empty:
@@ -81,7 +81,7 @@ def render():
         src = sessions[sessions[Session.MONTH].astype(str) == mf]
     if not src.empty and Session.STUDENT_CODE in src.columns:
         for code in src[Session.STUDENT_CODE].dropna().unique():
-            r = fin.student_revenue(str(code), src, month=None, enrollments=enroll, teachers=teachers)
+            r = fin.student_revenue(str(code), src, month=None, enrollments=enroll, teachers=teachers, program_map=state.program_rate_map())
             if r["hours"] <= 0:
                 continue
             name = ""

@@ -123,6 +123,23 @@ class Session:
     NOTES       = "ملاحظات المحفظ"
 
 
+class Program:
+    """برنامج دراسي (قرآن/نور البيان/...) بأسعاره الافتراضية — قابل للإضافة من الإعدادات."""
+    CODE     = "كود البرنامج"
+    NAME     = "اسم البرنامج"
+    STUDENT_RATE = "سعر ساعة الطالب"
+    TEACHER_RATE = "سعر ساعة المحفظ"
+    NOTES    = "ملاحظات"
+
+
+class Branch:
+    """فرع من فروع الدار — قابل للإضافة من الإعدادات."""
+    CODE    = "كود الفرع"
+    NAME    = "اسم الفرع"
+    ADDRESS = "العنوان"
+    NOTES   = "ملاحظات"
+
+
 class ParentFeedback:
     CODE         = "كود التقييم"
     STUDENT_CODE = "كود الطالب"
@@ -159,6 +176,10 @@ HEADERS = {
     "pfeedback": [getattr(ParentFeedback, a) for a in
         ("CODE","STUDENT_CODE","STUDENT_NAME","MONTH","SCORE","SATISFACTION",
          "NOTES","DATE","SOURCE")],
+    "programs": [getattr(Program, a) for a in
+        ("CODE","NAME","STUDENT_RATE","TEACHER_RATE","NOTES")],
+    "branches": [getattr(Branch, a) for a in
+        ("CODE","NAME","ADDRESS","NOTES")],
 }
 
 # مفتاح الورقة في القوائم المرجعية المرتبط بكل عمود قائمة

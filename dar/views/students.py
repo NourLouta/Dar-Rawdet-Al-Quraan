@@ -8,7 +8,6 @@ import streamlit as st
 
 from .. import ui, state
 from .. import sheets_io as io
-from ..config import BRANCHES
 from ..schema import (
     Student, Parent, options_from, code_of, make_display, clean_phone,
     is_valid_egypt_phone, to_date,
@@ -75,13 +74,13 @@ def render():
 
             c4, c5, c6 = st.columns(3)
             category = c4.selectbox("الفئة", [""] + state.lk("age_cat"))
-            study = c5.selectbox("نوع الدراسة", [""] + state.lk("study_type"))
+            study = c5.selectbox("نوع الدراسة", [""] + state.study_type_options())
             level = c6.selectbox("المستوى", [""] + state.lk("levels"))
 
             c7, c8, c9 = st.columns(3)
             surah = c7.selectbox("السورة الحالية", [""] + state.lk("surahs"))
             status = c8.selectbox("حالة الاشتراك", state.lk("sub_status") or ["نشط"])
-            branch = c9.selectbox("الفرع", [""] + BRANCHES)
+            branch = c9.selectbox("الفرع", [""] + state.branch_names())
 
             st.markdown("##### 👨‍👩‍👧 ولي الأمر")
             parent_sel = st.selectbox("اختر ولي أمر مسجّل أو أنشئ جديدًا", p_labels)
@@ -167,9 +166,9 @@ def render():
         e_sur = c3.selectbox("السورة الحالية", surs, index=_idx(surs, srow.get(Student.SURAH, "")), key="se_sur")
 
         c4, c5, c6 = st.columns(3)
-        studs = [""] + state.lk("study_type")
+        studs = [""] + state.study_type_options()
         e_study = c4.selectbox("نوع الدراسة", studs, index=_idx(studs, srow.get(Student.STUDY_TYPE, "")), key="se_study")
-        brs = [""] + BRANCHES
+        brs = [""] + state.branch_names()
         e_branch = c5.selectbox("الفرع", brs, index=_idx(brs, srow.get(Student.BRANCH, "")), key="se_branch")
         stts = state.lk("sub_status") or ["نشط", "موقوف", "تجميد مؤقت"]
         e_status = c6.selectbox("حالة الاشتراك", stts, index=_idx(stts, srow.get(Student.STATUS, "")), key="se_status")

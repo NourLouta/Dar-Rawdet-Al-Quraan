@@ -31,6 +31,8 @@ WS_MAP = {
     "sessions":    (config.WS_SESSIONS,        "sessions"),
     "pfeedback":   (config.WS_PARENT_FEEDBACK, "pfeedback"),
     "tfeedback":   (config.WS_TEACHER_FEEDBACK, None),
+    "programs":    (config.WS_PROGRAMS,        "programs"),
+    "branches":    (config.WS_BRANCHES,        "branches"),
 }
 
 # عمود المفتاح الأساسي لكل ورقة كيان — تُحذف الصفوف القالبية الفارغة منه عند القراءة
@@ -41,6 +43,8 @@ PRIMARY_CODE = {
     "enrollments": schema.Enrollment.CODE,
     "sessions":    schema.Session.CODE,
     "pfeedback":   schema.ParentFeedback.CODE,
+    "programs":    schema.Program.CODE,
+    "branches":    schema.Branch.CODE,
 }
 
 

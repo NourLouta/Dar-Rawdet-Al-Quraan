@@ -21,7 +21,7 @@ from dar import sheets_io as io
 from dar.config import T
 from dar.views import (
     dashboard, students, teachers, enrollments, sessions, finance_view,
-    feedback, reports,
+    feedback, reports, settings,
 )
 
 # ── تسجيل الدخول ──────────────────────────────────────────────────────────────
@@ -39,6 +39,7 @@ PAGES = {
     "💰 المالية": finance_view.render,
     "⭐ التقييمات": feedback.render,
     "📄 التقارير والتقاويم": reports.render,
+    "⚙️ الإعدادات": settings.render,
 }
 
 
