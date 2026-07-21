@@ -73,8 +73,11 @@ def _weekly_map(enr_row: dict) -> dict:
 
 
 def generate_rows(enr_row: dict, year: int, month: int, default_status: str,
-                  existing_keys: set, start_num: int):
-    """توليد صفوف حصص لتسجيل واحد في شهر معيّن — يدعم وقتًا/مدة مختلفة لكل يوم."""
+                  existing_keys: set, start_num: int, start_from=None):
+    """
+    توليد صفوف حصص لتسجيل واحد في شهر معيّن — يدعم وقتًا/مدة مختلفة لكل يوم.
+    start_from: إن حُدِّد تاريخ، تُتجاهل الأيام قبله (تبدأ الحصص من هذا التاريخ).
+    """
     wmap = _weekly_map(enr_row)
     if not wmap:
         return [], start_num
@@ -89,6 +92,8 @@ def generate_rows(enr_row: dict, year: int, month: int, default_status: str,
     ndays = calendar.monthrange(year, month)[1]
     for day in range(1, ndays + 1):
         d = date(year, month, day)
+        if start_from and d < start_from:
+            continue
         if d.weekday() not in wmap:
             continue
         if (e_code, d.isoformat()) in existing_keys:
@@ -118,8 +123,8 @@ def render():
     ui.header("📅 الحصص والإدخال", "توليد جداول الحصص وتسجيل التقييمات دون تكرار")
     data = state.get_data()
     sessions, enroll = data["sessions"], data["enrollments"]
-    t_gen, t_roll, t_cancel, t_log = st.tabs([
-        "⚡ توليد حصص تسجيل", "🔁 ترحيل شهري جماعي",
+    t_gen, t_single, t_roll, t_cancel, t_log = st.tabs([
+        "⚡ توليد حصص تسجيل", "➕ إضافة حصة مفردة", "🔁 ترحيل شهري جماعي",
         "🗓️ إلغاء/تعديل حالات الحصص", "✍️ تسجيل/تقييم حصة"])
 
     today = date.today()
@@ -140,6 +145,16 @@ def render():
             year = c1.number_input("السنة", min_value=2024, max_value=2100, value=today.year)
             month = c2.selectbox("الشهر", list(range(1, 13)), index=today.month - 1)
             dflt = c3.selectbox("الحالة الافتراضية", statuses)
+
+            # خيار بداية التوليد: من أول الشهر أو من تاريخ محدد (للطلاب المنضمّين في منتصف الشهر)
+            start_mode = st.radio("بداية التوليد", ["من أول الشهر", "من تاريخ محدّد"],
+                                  horizontal=True, key="gen_start_mode")
+            start_from = None
+            if start_mode == "من تاريخ محدّد":
+                default_d = date(int(year), int(month), min(today.day, 28))
+                start_from = st.date_input("ابدأ الحصص من تاريخ", value=default_d, format="YYYY-MM-DD",
+                                           key="gen_start_date")
+
             from ..schema import parse_day_schedule
             _sched = parse_day_schedule(enr.get(Enrollment.DAY_SCHEDULE, ""))
             if _sched:
@@ -149,7 +164,8 @@ def render():
                         f"الوقت {enr.get(Enrollment.SESS_TIME,'—')} | "
                         f"{enr.get(Enrollment.SESS_MIN,'—')} دقيقة")
             preview, _ = generate_rows(enr, int(year), int(month), dflt,
-                                       _existing_keys(sessions), _next_session_num(sessions))
+                                       _existing_keys(sessions), _next_session_num(sessions),
+                                       start_from=start_from)
             st.caption(f"سيتم توليد **{len(preview)}** حصة (مع تجاهل المكرر).")
             if preview:
                 ui.display_table(pd.DataFrame([{
@@ -163,6 +179,52 @@ def render():
                     st.success(f"✅ تم توليد {n} حصة للشهر {year}-{month:02d}.")
                 except Exception as e:
                     st.error(f"تعذّر التوليد: {e}")
+
+    # ── إضافة حصة مفردة (يوم إضافي/تعويضي خارج النمط) ────────────────────────────
+    with t_single:
+        can = state.write_banner()
+        if enroll.empty:
+            st.warning("أضف تسجيلًا أولًا.")
+        else:
+            st.caption("لإضافة حصة واحدة خارج الجدول الأسبوعي (مثل يوم إضافي أو تعويض).")
+            opts = [(r.get(Enrollment.DISPLAY) or r.get(Enrollment.CODE, f"صف {i}"), i)
+                    for i, r in enroll.iterrows()]
+            sel1 = st.selectbox("اختر التسجيل", [o[0] for o in opts], key="single_enr")
+            enr1 = enroll.loc[dict(opts)[sel1]].to_dict()
+            times = state.lk("time_slots") or ["5:00 م"]
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            s_date = sc1.date_input("التاريخ", value=today, format="YYYY-MM-DD", key="single_date")
+            s_time = sc2.selectbox("الوقت", times, key="single_time")
+            s_min = sc3.selectbox("المدة (دقيقة)", [30, 45, 60, 90, 120], key="single_min")
+            s_stat = sc4.selectbox("الحالة", statuses, key="single_stat")
+            if st.button("➕ إضافة الحصة", disabled=not can):
+                from ..schema import parse_arabic_time, format_arabic_time, add_minutes, month_key
+                stime = parse_arabic_time(s_time)
+                etime = add_minutes(stime, int(s_min)) if stime else None
+                e_code = str(enr1.get(Enrollment.CODE, "")).strip()
+                # منع التكرار لنفس التسجيل/التاريخ
+                if (e_code, s_date.isoformat()) in _existing_keys(sessions):
+                    st.warning("توجد حصة بالفعل لهذا التسجيل في هذا التاريخ.")
+                else:
+                    code = f"{CODE_PREFIX['session'][0]}{_next_session_num(sessions):0{CODE_PREFIX['session'][1]}d}"
+                    row = {
+                        Session.CODE: code,
+                        Session.ENROLL_CODE: enr1.get(Enrollment.DISPLAY) or e_code,
+                        Session.STUDENT_CODE: code_of(enr1.get(Enrollment.STUDENT_CODE, "")),
+                        Session.STUDENT_NAME: enr1.get(Enrollment.STUDENT_NAME, ""),
+                        Session.TEACHER_CODE: code_of(enr1.get(Enrollment.TEACHER_CODE, "")),
+                        Session.TEACHER_NAME: enr1.get(Enrollment.TEACHER_NAME, ""),
+                        Session.DATE: s_date, Session.MONTH: month_key(s_date),
+                        Session.START_TIME: format_arabic_time(stime),
+                        Session.END_TIME: format_arabic_time(etime),
+                        Session.DURATION: int(s_min), Session.STATUS: s_stat,
+                    }
+                    try:
+                        io.append_row("sessions", row)
+                        state.get_data(force=True)
+                        st.success(f"✅ تمت إضافة حصة {code} بتاريخ {s_date} للطالب {row[Session.STUDENT_NAME]}.")
+                    except Exception as e:
+                        st.error(f"تعذّر الإضافة: {e}")
 
     # ── ترحيل جماعي ────────────────────────────────────────────────────────────
     with t_roll:
@@ -264,18 +326,23 @@ def render():
     with t_log:
         can = state.write_banner()
         if sessions.empty:
-            st.info("لا توجد حصص لتسجيلها بعد.")
+            st.info("ℹ️ لا تظهر الحصص هنا إلا بعد توليدها. الخطوات: **الطلاب ← التسجيلات ← ⚡ توليد حصص تسجيل**، "
+                    "ثم ارجع لهذه الشاشة لتسجيل/تقييم الحصص.")
             return
         months = state.months_available(sessions)
         c1, c2 = st.columns(2)
         mon = c1.selectbox("الشهر", months, key="log_month")
         sub = sessions[sessions[Session.MONTH].astype(str) == mon] if Session.MONTH in sessions.columns else sessions
-        teachers_list = ["الكل"] + sorted(sub[Session.TEACHER_NAME].dropna().unique().tolist())
-        tf = c2.selectbox("المحفظ", teachers_list, key="log_teacher")
-        if tf != "الكل":
-            sub = sub[sub[Session.TEACHER_NAME] == tf]
+        # بحث بالطالب أو المحفظ (يحل مشكلة عدم ظهور الطالب)
+        who = c2.text_input("🔍 بحث باسم الطالب أو المحفظ", key="log_search")
+        if who:
+            m = pd.Series(False, index=sub.index)
+            for col in (Session.STUDENT_NAME, Session.TEACHER_NAME):
+                if col in sub.columns:
+                    m |= sub[col].astype(str).str.contains(who, case=False, na=False)
+            sub = sub[m]
         if sub.empty:
-            st.info("لا توجد حصص مطابقة.")
+            st.info("لا توجد حصص مطابقة في هذا الشهر. تأكد أنك ولّدت حصص هذا الطالب لهذا الشهر.")
             return
         # اختيار حصة
         def _lbl(r):

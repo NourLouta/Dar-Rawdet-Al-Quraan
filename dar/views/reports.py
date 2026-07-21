@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 
 from .. import ui, state, finance as fin, documents as doc
-from .. import sheets_io as io
 from ..config import STUDENT_HOURLY
 from ..schema import (
     Student, Teacher, Session, options_from, code_of,
@@ -13,7 +12,7 @@ from ..schema import (
 from .feedback import RATING_SCORE
 
 
-def _student_stats(s_code, sessions, students, teachers, pfb, month):
+def _student_stats(s_code, sessions, students, teachers, pfb, month, enrollments=None):
     sub = sessions[sessions[Session.STUDENT_CODE].astype(str) == str(s_code)] if Session.STUDENT_CODE in sessions.columns else sessions.iloc[0:0]
     if month and Session.MONTH in sub.columns:
         sub = sub[sub[Session.MONTH].astype(str) == month]
@@ -21,7 +20,7 @@ def _student_stats(s_code, sessions, students, teachers, pfb, month):
     done = int((sub[Session.STATUS].astype(str).str.strip() == "تمت").sum()) if Session.STATUS in sub.columns else 0
     cancelled = total - done
     hours = fin.completed_hours(sub)
-    rev = fin.student_revenue(str(s_code), sub, STUDENT_HOURLY, month=None)
+    rev = fin.student_revenue(str(s_code), sub, month=None, enrollments=enrollments, teachers=teachers)
     # متوسط تقييم المحفظ
     avg_rating = "—"
     if Session.RATING in sub.columns:
@@ -51,6 +50,7 @@ def render():
     ui.header("📄 التقارير والتقاويم", "مستندات PDF احترافية بهوية الدار — جاهزة للإرسال")
     data = state.get_data()
     sessions, students, teachers = data["sessions"], data["students"], data["teachers"]
+    enroll = data["enrollments"]
     pfb = data.get("pfeedback", pd.DataFrame())
     months = state.months_available(sessions)
     if not months:
@@ -95,16 +95,9 @@ def render():
             fname = f"{title}-{month}.pdf"
             pdf = doc.monthly_calendar_pdf(month, sub, title, "الحصص الشهرية", show_field=field)
             st.download_button("⬇️ تحميل التقويم", pdf, file_name=fname, mime="application/pdf")
-            st.success("تم التوليد — اضغط تحميل ثم شارك.")
-            # رفع إلى Drive لإرفاق الرابط في رسالة واتساب (واتساب لا يدعم إرفاق ملف عبر الرابط)
-            link = None
-            with st.spinner("جارٍ تجهيز رابط المشاركة…"):
-                link = io.save_pdf_to_drive(fname, pdf)
+            st.success("تم التوليد — حمّل الملف ثم شاركه.")
             msg = f"السلام عليكم ورحمة الله، إليكم جدول حصص {title} لشهر {month} من دار روضة القرآن."
-            if link:
-                msg += f"\nرابط التقويم (PDF): {link}"
-                st.info(f"🔗 رابط التقويم على Drive: {link}")
-            ui.whatsapp_button(phone, msg, with_attachment_hint=not bool(link))
+            ui.whatsapp_button(phone, msg)
 
     # ── تقرير طالب ──────────────────────────────────────────────────────────────
     with t_srep:
@@ -119,7 +112,7 @@ def render():
         if st.button("📄 توليد تقرير الطالب (PDF)"):
             srow = students[students[Student.CODE] == code]
             srow = srow.iloc[0].to_dict() if not srow.empty else {Student.CODE: code, Student.NAME: (sel or "").split(" — ")[-1]}
-            stats, sub = _student_stats(code, sessions, students, teachers, pfb, month)
+            stats, sub = _student_stats(code, sessions, students, teachers, pfb, month, enrollments=enroll)
             pdf = doc.student_report_pdf(srow, stats, sub.head(40).to_dict("records"), month)
             st.download_button("⬇️ تحميل التقرير", pdf,
                                file_name=f"تقرير-{srow.get(Student.NAME,'')}-{month}.pdf",
@@ -145,7 +138,7 @@ def render():
         if st.button("📄 توليد تقرير المحفظ (PDF)"):
             trow = teachers[teachers[Teacher.CODE] == code]
             trow = trow.iloc[0].to_dict() if not trow.empty else {Teacher.CODE: code, Teacher.NAME: name}
-            sal = fin.teacher_salary(code, name, sessions, teachers, month)
+            sal = fin.teacher_salary(code, name, sessions, teachers, month, enrollments=enroll)
             # طلاب المحفظ في الشهر
             sub = sessions[(sessions[Session.TEACHER_NAME] == name)] \
                 if Session.TEACHER_NAME in sessions.columns else sessions.iloc[0:0]

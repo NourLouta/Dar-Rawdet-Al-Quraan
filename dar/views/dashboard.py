@@ -25,7 +25,7 @@ def render():
     n_total = len(students)
     n_active = int(state.active_mask(students).sum())
     n_frozen = int(students[Student.STATUS].astype(str).str.contains("تجميد", na=False).sum()) if Student.STATUS in students.columns else 0
-    cs = fin.center_summary(sessions, teachers, STUDENT_HOURLY, month=month_f)
+    cs = fin.center_summary(sessions, teachers, STUDENT_HOURLY, month=month_f, enrollments=enroll)
 
     ui.kpi_row([
         ("👨‍🎓", n_total, "إجمالي الطلاب", "teal"),

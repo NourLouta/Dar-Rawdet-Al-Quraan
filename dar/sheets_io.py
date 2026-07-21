@@ -333,20 +333,6 @@ def _script_post(payload: dict) -> dict:
     return res
 
 
-def save_pdf_to_drive(filename: str, data: bytes):
-    """رفع PDF إلى Drive عبر Apps Script وإرجاع رابط المشاركة (أو None)."""
-    if write_target() != "script":
-        return None
-    import base64
-    try:
-        res = _script_post({"action": "savePdf", "filename": filename,
-                            "base64": base64.b64encode(data).decode()})
-        return res.get("url")
-    except Exception as e:
-        logger.warning(f"تعذّر رفع الملف إلى Drive: {e}")
-        return None
-
-
 def _full_headers(key: str, existing: list[str], sample_keys) -> list[str]:
     """دمج الأعمدة الموجودة مع أعمدة المخطط ومفاتيح البيانات (تُضاف الناقصة في النهاية)."""
     out = [h for h in existing if h]

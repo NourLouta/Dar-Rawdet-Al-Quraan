@@ -65,6 +65,7 @@ class Student:
     PARENT_NAME = "اسم ولي الأمر"
     PARENT_PHONE= "رقم هاتف ولي الأمر"
     STUDY_TYPE  = "نوع الدراسة"
+    BRANCH      = "الفرع"
     LEVEL       = "المستوى"
     SURAH       = "السورة الحالية"
     STATUS      = "حالة الاشتراك"
@@ -96,6 +97,8 @@ class Enrollment:
     SESS_TIME   = "وقت الحصة"
     SESS_MIN    = "مدة الحصة (دقيقة)"
     DAY_SCHEDULE = "جدول الأيام"   # وقت/مدة مختلفة لكل يوم (اختياري)
+    STUDENT_RATE = "سعر ساعة الطالب"   # قابل للتعديل لكل تسجيل
+    TEACHER_RATE = "سعر ساعة المحفظ"   # قابل للتعديل لكل تسجيل
 
 
 class Session:
@@ -143,12 +146,12 @@ HEADERS = {
          "N_KIDS","NOTES","DISPLAY")],
     "students": [getattr(Student, a) for a in
         ("CODE","NAME","BIRTH","AGE","GENDER","CATEGORY","PARENT_CODE","RELATION",
-         "PARENT_NAME","PARENT_PHONE","STUDY_TYPE","LEVEL","SURAH","STATUS",
+         "PARENT_NAME","PARENT_PHONE","STUDY_TYPE","BRANCH","LEVEL","SURAH","STATUS",
          "STOP_REASON","SUB_SYSTEM","SUB_VALUE","REG_DATE","PREF_DAYS","NOTES","DISPLAY")],
     "enrollments": [getattr(Enrollment, a) for a in
         ("CODE","STUDENT_CODE","STUDENT_NAME","TEACHER_CODE","TEACHER_NAME",
-         "STUDY_TYPE","START","END","SUB_VALUE","SESS_PRICE","STATUS","NOTES",
-         "WEEK_DAYS","SESS_TIME","SESS_MIN","DAY_SCHEDULE","DISPLAY")],
+         "STUDY_TYPE","START","END","SUB_VALUE","SESS_PRICE","STUDENT_RATE","TEACHER_RATE",
+         "STATUS","NOTES","WEEK_DAYS","SESS_TIME","SESS_MIN","DAY_SCHEDULE","DISPLAY")],
     "sessions": [getattr(Session, a) for a in
         ("CODE","ENROLL_CODE","STUDENT_CODE","STUDENT_NAME","TEACHER_CODE",
          "TEACHER_NAME","DATE","MONTH","START_TIME","END_TIME","DURATION","STATUS",

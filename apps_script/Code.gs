@@ -19,7 +19,6 @@ function doPost(e) {
       case 'append': return append_(ss, body);
       case 'update': return update_(ss, body);
       case 'delete': return del_(ss, body);
-      case 'savePdf': return savePdf_(body);
       default:       return out({ ok: false, error: 'unknown action' });
     }
   } catch (err) {
@@ -102,21 +101,6 @@ function update_(ss, body) {
     }
   }
   return out({ ok: true, updated: false });
-}
-
-// حفظ ملف PDF في Google Drive وإرجاع رابط مشاركة (للإرسال عبر واتساب).
-function savePdf_(body) {
-  var folderName = 'تقاويم وتقارير دار روضة القرآن';
-  var folders = DriveApp.getFoldersByName(folderName);
-  var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
-  var name = body.filename || 'document.pdf';
-  // إزالة نسخة قديمة بنفس الاسم (إبقاء ملف واحد لكل اسم)
-  var old = folder.getFilesByName(name);
-  while (old.hasNext()) { old.next().setTrashed(true); }
-  var blob = Utilities.newBlob(Utilities.base64Decode(body.base64), 'application/pdf', name);
-  var file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  return out({ ok: true, url: file.getUrl(), id: file.getId() });
 }
 
 function del_(ss, body) {
