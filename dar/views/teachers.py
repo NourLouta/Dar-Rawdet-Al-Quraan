@@ -14,11 +14,22 @@ from ..schema import Teacher, Session, make_display, clean_phone, is_valid_egypt
 
 def render():
     ui.header("👩‍🏫 المحفظون", "إدارة بيانات المحفظين والأداء")
+    ui.guide("عن هذه الشاشة", """
+**ما هي؟** بيانات المحفظين والمحفظات (الاسم، المؤهل، سعر الساعة الافتراضي)، بالإضافة
+إلى كشف أداء شهري (عدد الحصص، الساعات، الراتب المستحق).
+
+**متى تستخدمها؟**
+- عند التعاقد مع محفظة/محفظ جديد.
+- لمراجعة سعر ساعة محفظ معيّن (يُستخدم كافتراضي عند عدم وجود سعر خاص بالبرنامج).
+- لمتابعة حِمل كل محفظة شهريًا قبل حساب المرتبات في شاشة «المالية».
+""")
     data = state.get_data()
     teachers, sessions = data["teachers"], data["sessions"]
     t_list, t_perf, t_add = st.tabs(["📋 القائمة", "📊 الأداء", "➕ إضافة محفظ"])
 
     with t_list:
+        ui.guide("متى تستخدم هذا التبويب؟",
+                "لعرض كل بيانات المحفظين المسجَّلين وتحميلها CSV — مرجع سريع للأسماء والأسعار والمؤهلات.")
         if teachers.empty:
             st.info("لا يوجد محفظون بعد.")
         else:
@@ -28,6 +39,9 @@ def render():
             ui.display_table(teachers[cols], download_name="المحفظين.csv")
 
     with t_perf:
+        ui.guide("متى تستخدم هذا التبويب؟",
+                "لمراجعة أداء كل المحفظين شهريًا قبل صرف المرتبات: عدد الحصص المنفّذة والملغية، "
+                "الساعات، وصافي التحويل بعد رسوم فودافون كاش والتقريب. يمكن اختيار شهر معيّن أو كل الشهور.")
         months = ["كل الشهور"] + state.months_available(sessions)
         month = st.selectbox("الشهر", months, key="t_perf_month")
         mf = None if month == "كل الشهور" else month
@@ -45,6 +59,9 @@ def render():
             ui.display_table(disp, download_name="اداء_المحفظين.csv")
 
     with t_add:
+        ui.guide("متى تستخدم هذا التبويب؟",
+                "عند التعاقد مع محفظة أو محفظ جديد. سعر الساعة هنا هو الافتراضي الذي يُستخدم "
+                "عندما لا يحدّد البرنامج (من شاشة الإعدادات) سعرًا خاصًا للمحفظين.")
         can = state.write_banner()
         next_code = io.next_code("teacher", teachers, Teacher.CODE)
         st.markdown(f"**الكود الجديد:** `{next_code}`")

@@ -200,6 +200,15 @@ def header(title, subtitle=""):
     st.markdown(f'<div class="main-header"><h1>{title}</h1>{sub}</div>', unsafe_allow_html=True)
 
 
+def guide(title: str, body: str, expanded: bool = False):
+    """
+    صندوق إرشادي قابل للطي: ما وظيفة هذه الشاشة/التبويب، ومتى تُستخدم.
+    يُستدعى في أعلى كل صفحة (شرح عام) وأعلى كل تبويب (شرح خاص بالتبويب).
+    """
+    with st.expander(f"ℹ️ {title}", expanded=expanded):
+        st.markdown(body)
+
+
 def section(title, subtitle="", icon=""):
     sub = f'<p style="color:{T.TEXT_SECONDARY};margin:0.3rem 0 0;font-size:0.9rem;">{subtitle}</p>' if subtitle else ""
     st.markdown(f'<div class="section-header"><h3 style="color:{T.PRIMARY_DARK};margin:0;font-size:1.2rem;font-weight:800;">{icon} {title}</h3>{sub}</div>', unsafe_allow_html=True)

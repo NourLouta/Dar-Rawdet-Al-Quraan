@@ -50,18 +50,22 @@ def simple_crud(*, sheet_key: str, code_field: str, name_field: str | None,
                 fields: list[Field], code_prefix_key: str, empty_msg: str = "لا توجد سجلات بعد.",
                 list_cols: list[str] | None = None,
                 seed_rows: Callable[[], list[dict]] | None = None,
-                seed_label: str = "🌱 إضافة القيم الافتراضية دفعة واحدة"):
+                seed_label: str = "🌱 إضافة القيم الافتراضية دفعة واحدة",
+                label: str = "العنصر"):
     """
     يعرض 3 تبويبات (قائمة / إضافة / تعديل-حذف) لورقة بسيطة ذات كود فريد.
 
     seed_rows: دالة تُرجع صفوفًا افتراضية (بلا عمود الكود) لتعبئة الورقة أول مرة
     بضغطة واحدة بدل إدخالها يدويًا واحدًا تلو الآخر.
+    label: اسم عربي مفرد للعنصر (مثل "البرنامج"/"الفرع") يُستخدم في نصوص الإرشاد العامة.
     """
     data = state_mod.get_data()
     df = data.get(sheet_key, pd.DataFrame())
     t_list, t_add, t_edit = st.tabs(["📋 القائمة", "➕ إضافة", "✏️ تعديل / حذف"])
 
     with t_list:
+        ui.guide("متى تستخدم هذا التبويب؟",
+                f"لعرض كل {label} المُضافة حتى الآن، وتنزيلها كملف CSV عند الحاجة.")
         if df.empty:
             st.info(empty_msg)
             if seed_rows and state_mod.write_banner():
@@ -86,6 +90,9 @@ def simple_crud(*, sheet_key: str, code_field: str, name_field: str | None,
             ui.display_table(df[cols], download_name=f"{sheet_key}.csv")
 
     with t_add:
+        ui.guide("متى تستخدم هذا التبويب؟",
+                f"لإضافة {label} جديد. الكود يُنشأ تلقائيًا — لا داعي لكتابته بنفسك، "
+                "ويظهر ما تضيفينه فورًا في كل الشاشات ذات الصلة دون أي تعديل آخر.")
         can = state_mod.write_banner()
         next_code = io.next_code(code_prefix_key, df, code_field)
         st.markdown(f"**الكود الجديد:** `{next_code}`")
@@ -107,6 +114,8 @@ def simple_crud(*, sheet_key: str, code_field: str, name_field: str | None,
                         st.error(f"تعذّر الحفظ: {e}")
 
     with t_edit:
+        ui.guide("متى تستخدم هذا التبويب؟",
+                f"لتعديل بيانات {label} موجود (مثل تغيير سعر أو اسم)، أو حذفه نهائيًا.")
         can = state_mod.write_banner()
         if df.empty:
             st.info(empty_msg)

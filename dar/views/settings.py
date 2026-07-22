@@ -16,6 +16,16 @@ from ..crud import Field, simple_crud
 
 def render():
     ui.header("⚙️ الإعدادات", "البرامج والأسعار والفروع — بلا حاجة لتعديل برمجي")
+    ui.guide("عن هذه الشاشة", """
+**ما هي؟** المكان الوحيد الذي تُدار منه بيانات "مرجعية" تتغيّر بين حين وآخر: البرامج
+الدراسية وأسعارها، وفروع الدار — بدل أن تكون مكتوبة داخل الكود.
+
+**متى تستخدمها؟**
+- عند فتح فرع جديد.
+- عند إضافة برنامج دراسي جديد أو تغيير سعر برنامج قائم.
+- **هذا هو الحل العام لأي طلب مستقبلي مشابه** — لا حاجة لطلب تعديل برمجي، أضيفيه بنفسك هنا
+  وسيظهر فورًا في شاشات «التسجيلات» و«الطلاب» و«المالية».
+""")
     ui.insight(
         "أي برنامج أو فرع تضيفه هنا يظهر تلقائيًا في شاشات «التسجيلات» و«الطلاب» و«المالية». "
         "لا داعي لطلب تعديل من المطوّر عند تغيّر الأسعار أو فتح فرع جديد.", "info", "💡")
@@ -26,7 +36,7 @@ def render():
         st.caption("سعر ساعة المحفظ: اتركه صفرًا لأخذه من ملف المحفظين لكل محفظة على حدة.")
         simple_crud(
             sheet_key="programs", code_field=Program.CODE, name_field=Program.NAME,
-            code_prefix_key="program",
+            code_prefix_key="program", label="البرنامج",
             empty_msg="لا توجد برامج مُضافة بعد — تُستخدم حاليًا أسعار افتراضية عامة.",
             fields=[
                 Field(Program.NAME, "اسم البرنامج", required=True,
@@ -47,7 +57,7 @@ def render():
     with t_branch:
         simple_crud(
             sheet_key="branches", code_field=Branch.CODE, name_field=Branch.NAME,
-            code_prefix_key="branch",
+            code_prefix_key="branch", label="الفرع",
             empty_msg="لا توجد فروع مُضافة بعد — تُستخدم حاليًا قائمة افتراضية عامة.",
             fields=[
                 Field(Branch.NAME, "اسم الفرع", required=True),
