@@ -185,12 +185,21 @@ def render():
             preview, _ = generate_rows(enr, int(year), int(month), dflt,
                                        _existing_keys(sessions), _next_session_num(sessions),
                                        start_from=start_from)
-            st.caption(f"سيتم توليد **{len(preview)}** حصة (مع تجاهل المكرر).")
             if preview:
+                st.caption(f"سيتم توليد **{len(preview)}** حصة (مع تجاهل المكرر).")
                 ui.display_table(pd.DataFrame([{
                     "التاريخ": r[Session.DATE], "الوقت": r[Session.START_TIME],
                     "المدة": r[Session.DURATION], "الحالة": r[Session.STATUS],
                 } for r in preview]), max_height="240px")
+            else:
+                wmap_check = _weekly_map(enr)
+                if not wmap_check:
+                    st.warning("⚠️ الزر معطّل: هذا التسجيل ليس له جدول أسبوعي محفوظ بعد — "
+                               "أضيفي الجدول من تبويب «✏️ تعديل / حذف» في شاشة «التسجيلات».")
+                else:
+                    st.success("✅ الزر معطّل لأن كل حصص هذا التسجيل لهذا الشهر (وهذا النطاق من التواريخ) "
+                               "**مولّدة بالفعل** — لا حاجة لإعادة التوليد. راجعي تبويب «🗓️ إلغاء/تعديل "
+                               "حالات الحصص» لرؤيتها.")
             if st.button("⚡ توليد الحصص", disabled=not (can and preview)):
                 try:
                     n = io.append_rows("sessions", preview)
@@ -220,7 +229,7 @@ def render():
             sc1, sc2, sc3, sc4 = st.columns(4)
             s_date = sc1.date_input("التاريخ", value=today, format="YYYY-MM-DD", key="single_date")
             s_time = sc2.selectbox("الوقت", times, key="single_time")
-            s_min = sc3.selectbox("المدة (دقيقة)", [30, 45, 60, 90, 120], key="single_min")
+            s_min = sc3.selectbox("المدة (دقيقة)", [15, 20, 25, 30, 45, 60, 90, 120], key="single_min")
             s_stat = sc4.selectbox("الحالة", statuses, key="single_stat")
             if st.button("➕ إضافة الحصة", disabled=not can):
                 from ..schema import parse_arabic_time, format_arabic_time, add_minutes, month_key

@@ -262,6 +262,8 @@ def _sessions_by_day(sessions_df, month_key):
     df = sessions_df
     if Session.MONTH in df.columns:
         df = df[df[Session.MONTH].astype(str).str.strip() == str(month_key)]
+    if Session.STATUS in df.columns:
+        df = df[~df[Session.STATUS].astype(str).str.strip().str.startswith("ملغ")]
     for _, r in df.iterrows():
         d = to_date(r.get(Session.DATE))
         if not d:

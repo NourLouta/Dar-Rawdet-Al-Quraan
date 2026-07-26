@@ -3,6 +3,7 @@
 from __future__ import annotations
 from datetime import date
 
+import pandas as pd
 import streamlit as st
 
 from .. import ui, state
@@ -35,12 +36,27 @@ def _schedule_editor(times, key_prefix, preset_days=None, preset_sched=None):
         cc1.markdown(f"<div style='padding-top:2rem;font-weight:700;'>{d}</div>", unsafe_allow_html=True)
         dt, dm = presched.get(d, (times[0] if times else "5:00 م", 30))
         t_idx = times.index(dt) if dt in times else 0
-        durs = [30, 45, 60, 90, 120]
+        durs = [15, 20, 25, 30, 45, 60, 90, 120]
         m_idx = durs.index(int(dm)) if int(dm) in durs else 0
         t = cc2.selectbox(f"وقت {d}", times, index=t_idx, key=f"{key_prefix}_t_{d}")
         m = cc3.selectbox(f"مدة {d} (دقيقة)", durs, index=m_idx, key=f"{key_prefix}_m_{d}")
         sched.append((d, t, int(m)))
     return sched
+
+
+def _active_duplicates(enroll, s_code, t_code, exclude_code=None):
+    """تسجيلات نشطة قائمة بالفعل لنفس الطالب/المحفظ (لتحذير السكرتير قبل تسجيل مكرَّر)."""
+    if enroll.empty or not s_code or not t_code:
+        return []
+    df = enroll.copy()
+    df["_s"] = df.get(Enrollment.STUDENT_CODE, "").apply(lambda v: code_of(v) or v)
+    df["_t"] = df.get(Enrollment.TEACHER_CODE, "").apply(lambda v: code_of(v) or v)
+    match = df[(df["_s"] == s_code) & (df["_t"] == t_code)]
+    if Enrollment.STATUS in match.columns:
+        match = match[match[Enrollment.STATUS].astype(str).str.contains("نشط", na=False)]
+    if exclude_code:
+        match = match[match[Enrollment.CODE].astype(str) != str(exclude_code)]
+    return match[Enrollment.CODE].astype(str).tolist()
 
 
 def _rate_inputs(study, t_code, teachers, key_prefix, cur_s=None, cur_t=None):
@@ -82,15 +98,27 @@ def render():
 
     # ── القائمة ───────────────────────────────────────────────────────────────
     with t_list:
-        ui.guide("متى تستخدم هذا التبويب؟",
-                "لمراجعة كل التسجيلات الحالية: من مع من، بأي برنامج وسعر وجدول، وما حالتها.")
+        ui.guide("متى تستخدم هذا التبويب؟", """
+لمراجعة كل التسجيلات الحالية: من مع من، بأي برنامج وسعر وجدول، وما حالتها.
+**لمراجعة تسجيلات شهر معيّن فقط** (مثل «ما الذي تسجّل هذا الشهر؟»): استخدمي فلتر
+«شهر البداية» أدناه — يعرض التسجيلات التي بدأت في ذلك الشهر تحديدًا.
+""")
         if enroll.empty:
             st.info("لا توجد تسجيلات بعد.")
         else:
+            view = enroll.copy()
+            if Enrollment.START in view.columns:
+                starts = pd.to_datetime(view[Enrollment.START], errors="coerce")
+                month_opts = ["الكل"] + sorted(starts.dt.strftime("%Y-%m").dropna().unique().tolist(), reverse=True)
+                mon_sel = st.selectbox("📅 شهر البداية", month_opts, key="enr_list_month")
+                if mon_sel != "الكل":
+                    view = view[starts.dt.strftime("%Y-%m") == mon_sel]
+                st.caption(f"عدد التسجيلات المعروضة: {len(view)}")
             cols = [c for c in [Enrollment.CODE, Enrollment.STUDENT_NAME, Enrollment.TEACHER_NAME,
-                                Enrollment.STUDY_TYPE, Enrollment.WEEK_DAYS, Enrollment.STUDENT_RATE,
-                                Enrollment.TEACHER_RATE, Enrollment.STATUS] if c in enroll.columns]
-            ui.display_table(enroll[cols], download_name="التسجيلات.csv")
+                                Enrollment.STUDY_TYPE, Enrollment.WEEK_DAYS, Enrollment.START,
+                                Enrollment.STUDENT_RATE, Enrollment.TEACHER_RATE, Enrollment.STATUS]
+                    if c in view.columns]
+            ui.display_table(view[cols], download_name="التسجيلات.csv")
 
     # ── تسجيل جديد ─────────────────────────────────────────────────────────────
     with t_add:
@@ -119,6 +147,15 @@ def render():
             start = c4.date_input("تاريخ البداية", value=date.today(), format="YYYY-MM-DD", key="enr_start")
             status = c5.selectbox("حالة التسجيل", ["نشط", "موقوف", "منتهي"], key="enr_status")
 
+            dup_codes = _active_duplicates(enroll, code_of(s_lbl), code_of(t_lbl))
+            confirm_dup = True
+            if dup_codes:
+                confirm_dup = st.checkbox(
+                    f"⚠️ يوجد بالفعل تسجيل نشط بين نفس الطالب والمحفظ ({'، '.join(dup_codes)}) — "
+                    "هل تقصدين تعديل ذلك التسجيل من تبويب «✏️ تعديل / حذف» بدلًا من إنشاء تسجيل جديد؟ "
+                    "أؤكد أنني أقصد فعلًا إنشاء تسجيل إضافي جديد.",
+                    key="enr_confirm_dup")
+
             srate, trate = _rate_inputs(study, code_of(t_lbl), teachers, "enr")
 
             st.markdown("##### 🗓️ الجدول الأسبوعي (يُولّد الحصص تلقائيًا)")
@@ -130,6 +167,8 @@ def render():
                     st.error("اختر الطالب والمحفظ.")
                 elif not sched:
                     st.error("اختر يومًا واحدًا على الأقل.")
+                elif dup_codes and not confirm_dup:
+                    st.error("أكّدي أعلاه أنك تقصدين تسجيلًا إضافيًا فعلًا، أو عدّلي التسجيل القائم بدلًا من ذلك.")
                 else:
                     s_code, t_code = code_of(s_lbl), code_of(t_lbl)
                     s_name = s_lbl.split(" — ")[-1] if " — " in s_lbl else ""
@@ -157,6 +196,7 @@ def render():
                             summ = "، ".join(f"{d} {t}({m}د)" for d, t, m in sched)
                             st.success(f"✅ تم حفظ التسجيل {next_code}: {s_name} مع {t_name} — {summ} | "
                                        f"الطالب {srate:.0f} والمحفظ {trate:.0f} ج.م/س")
+                            st.rerun()
                         except Exception as e:
                             st.error(f"تعذّر الحفظ: {e}")
 
