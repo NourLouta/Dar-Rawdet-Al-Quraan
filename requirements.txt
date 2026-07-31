@@ -17,3 +17,6 @@ python-bidi>=0.4
 openpyxl>=3.1
 fuzzywuzzy>=0.18
 python-Levenshtein>=0.21
+
+# Supabase (Phase A — قراءة/كتابة اختيارية بجانب Google Sheets أثناء الترحيل)
+supabase>=2.4
