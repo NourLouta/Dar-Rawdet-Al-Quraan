@@ -126,20 +126,62 @@ python migrate.py --old "مسار الملف القديم.xlsx" --out "data/migr
 
 ---
 
+## 8) الترحيل إلى Supabase (Postgres) — قيد التنفيذ
+
+المشروع في مسار ترحيل تدريجي من Google Sheets إلى Supabase (مجاني)، بلا أي
+مخاطرة على النظام الحيّ — الخطة الكاملة في `docs/plans/supabase-migration.md`
+(أو ابحث عن "Plan: Migrate Dar to Supabase" في محادثات هذا المشروع).
+
+**الحالة الحالية (تحديث لاحق حسب التقدّم):**
+- ✅ **Phase A0/A1** — مشروع Supabase حيّ (`dar-rawdet-alquran`)، مخطط `dar` منظّم
+  بالكامل مُطبَّق (`supabase/migrations/0001_dar_schema.sql`)، RLS حماية دفاعية
+  (`0002_dar_rls.sql` — رفض تام لأي وصول عدا `service_role`).
+- ✅ **Phase A2** — نسخ أوّلي كامل من Sheets الحيّة إلى Supabase عبر
+  `migrate_to_supabase.py` (يقرأ فقط عبر `sheets_io.read_ws()`، idempotent،
+  آمن لإعادة التشغيل). تحقّق عبر `verify_migration.py` — تطابق كامل عدا فجوة
+  بيانات حقيقية موجودة أصلًا في الشيت (تسجيل بلا محفظ، غير متعلقة بالترحيل).
+- ✅ **Phase A3** — مسار قراءة بديل (`dar/supabase_io.py`) يُعيد بناء نفس الشكل
+  المسطّح بالأعمدة العربية من المخطط المنظّم، مفعّل عبر `[supabase] read_from`
+  في `secrets.toml` (`"sheets"` افتراضيًا، `"supabase"` للتجربة) — **مستقل تمامًا
+  عن الكتابة**، لا يغيّر سلوك الحفظ إطلاقًا.
+- ⏳ **Phase A4/A5** — الكتابة المزدوجة ثم التحويل الفعلي للإنتاج: لم تبدأ بعد
+  عمدًا (تتطلب فترة تحقّق مطوّلة قبل لمس الكتابة الحيّة).
+
+**متغيّرات `secrets.toml` الجديدة:**
+```toml
+[supabase]
+url = "https://xxxx.supabase.co"
+service_role_key = "sb_secret_..."   # للخادم فقط — لا يُنشر أبدًا في متصفح
+publishable_key  = "sb_publishable_..."  # آمن للنشر (تطبيق المتنافسون المستقبلي)
+read_from = "sheets"   # أو "supabase" للتجربة — مستقل عن الكتابة تمامًا
+```
+
+**مخطط `motanafisoon` (Phase B):** نظام مسابقة "المتنافسون" الجديد مبني بالكامل
+على نفس مشروع Supabase (مخطط منفصل)، بأدوار Row-Level Security حقيقية
+(عضو/مشرفة/إدارة) — راجع `supabase/migrations/0003-0006_motanafisoon_*.sql`.
+واجهة الويب (Next.js) لم تُبنَ بعد (Phase B3).
+
+---
+
 ## بنية المشروع
 
 ```
-app.py                 نقطة الدخول (دخول + تنقّل)
-migrate.py             سكربت الترحيل لمرة واحدة
-requirements.txt
-assets/fonts/          خطوط عربية للـPDF (Amiri/Tajawal)
+app.py                    نقطة الدخول (دخول + تنقّل)
+migrate.py                سكربت الترحيل لمرة واحدة (الملف القديم → الجديد)
+migrate_to_supabase.py    سكربت النسخ من Sheets إلى Supabase (Phase A2، idempotent)
+verify_migration.py       تحقّق من تطابق Sheets/Supabase بعد النسخ
+requirements.txt          متطلبات التطبيق المنشور
+requirements-dev.txt      + أدوات محلية فقط (سكربتات الترحيل)
+assets/fonts/              خطوط عربية للـPDF (Amiri/Tajawal)
+supabase/migrations/       DDL منظّم بالتسلسل — dar.* ثم motanafisoon.*
 dar/
-  config.py            الثوابت والهوية والمسارات
-  schema.py            أسماء الأعمدة + التطبيع/التحقق
-  sheets_io.py         قراءة/كتابة Google Sheets (+ بديل محلي/CSV)
-  finance.py           الحساب بالساعة + فودافون + التقريب
-  documents.py         تقاويم وتقارير PDF عربية
-  ui.py                CSS والمكوّنات وتسجيل الدخول
-  state.py             وصول البيانات والقوائم المرجعية
-  views/               شاشات النظام الثماني
+  config.py               الثوابت والهوية والمسارات
+  schema.py               أسماء الأعمدة + التطبيع/التحقق
+  sheets_io.py            قراءة/كتابة Google Sheets (+ بديل محلي/CSV/Supabase)
+  supabase_io.py          مسار القراءة البديل من Supabase (Phase A3)
+  finance.py              الحساب بالساعة + فودافون + التقريب
+  documents.py            تقاويم وتقارير PDF عربية
+  ui.py                   CSS والمكوّنات وتسجيل الدخول
+  state.py                وصول البيانات والقوائم المرجعية
+  views/                  شاشات النظام التسع
 ```

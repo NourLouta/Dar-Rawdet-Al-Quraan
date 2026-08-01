@@ -19,6 +19,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import pandas as pd
 import streamlit as st
 
@@ -29,6 +33,14 @@ from dar.schema import (
 )
 
 BATCH_SIZE = 500
+
+
+def _num(v):
+    """pd.to_numeric returns numpy scalars (int64/float64), which the stdlib
+    json module can't serialize — convert to a native Python float, or None
+    for NaN/missing."""
+    n = pd.to_numeric(v, errors="coerce")
+    return None if pd.isna(n) else float(n)
 
 
 def get_client():
@@ -81,8 +93,8 @@ def migrate_branches(sb, df: pd.DataFrame, dry_run: bool) -> int:
 def migrate_programs(sb, df: pd.DataFrame, dry_run: bool) -> int:
     rows = [{
         "code": r[Program.CODE], "name": r.get(Program.NAME, ""),
-        "student_hourly_rate": pd.to_numeric(r.get(Program.STUDENT_RATE), errors="coerce"),
-        "teacher_hourly_rate": pd.to_numeric(r.get(Program.TEACHER_RATE), errors="coerce"),
+        "student_hourly_rate": _num(r.get(Program.STUDENT_RATE)),
+        "teacher_hourly_rate": _num(r.get(Program.TEACHER_RATE)),
         "notes": r.get(Program.NOTES, ""),
     } for _, r in df.iterrows() if str(r.get(Program.CODE, "")).strip()]
     return _upsert(sb, "programs", rows, "code", dry_run)
@@ -98,11 +110,11 @@ def migrate_teachers(sb, df: pd.DataFrame, dry_run: bool) -> int:
             "code": code, "full_name": r.get(Teacher.NAME, ""), "gender": r.get(Teacher.GENDER, ""),
             "phone": clean_phone(r.get(Teacher.PHONE)), "whatsapp": clean_phone(r.get(Teacher.WHATSAPP)),
             "governorate": r.get(Teacher.GOV, ""), "qualification": r.get(Teacher.QUALIFY, ""),
-            "experience_years": pd.to_numeric(r.get(Teacher.EXPERIENCE), errors="coerce"),
+            "experience_years": _num(r.get(Teacher.EXPERIENCE)),
             "teaches_category": r.get(Teacher.TEACHES, ""), "study_type": r.get(Teacher.STUDY_TYPE, ""),
             "work_system": r.get(Teacher.WORK_SYS, ""),
-            "hourly_rate": pd.to_numeric(r.get(Teacher.HOURLY), errors="coerce"),
-            "min_sessions": pd.to_numeric(r.get(Teacher.MIN_SESS), errors="coerce"),
+            "hourly_rate": _num(r.get(Teacher.HOURLY)),
+            "min_sessions": _num(r.get(Teacher.MIN_SESS)),
             "contract_status": r.get(Teacher.CONTRACT, ""),
             "start_date": str(to_date(r.get(Teacher.START)) or "") or None,
             "preferred_timing": r.get(Teacher.TIMING, ""), "pay_method": r.get(Teacher.PAY_METHOD, ""),
@@ -142,7 +154,7 @@ def migrate_students(sb, df: pd.DataFrame, parent_ids: dict, branch_ids: dict, d
             "level": r.get(Student.LEVEL, ""), "current_surah": r.get(Student.SURAH, ""),
             "status": r.get(Student.STATUS, ""), "stop_reason": r.get(Student.STOP_REASON, ""),
             "sub_system": r.get(Student.SUB_SYSTEM, ""),
-            "sub_value": pd.to_numeric(r.get(Student.SUB_VALUE), errors="coerce"),
+            "sub_value": _num(r.get(Student.SUB_VALUE)),
             "reg_date": str(to_date(r.get(Student.REG_DATE)) or "") or None,
             "preferred_days": r.get(Student.PREF_DAYS, ""), "notes": r.get(Student.NOTES, ""),
         })
@@ -165,10 +177,10 @@ def migrate_enrollments(sb, df: pd.DataFrame, student_ids: dict, teacher_ids: di
             "study_type": r.get(Enrollment.STUDY_TYPE, ""),
             "start_date": str(to_date(r.get(Enrollment.START)) or "") or None,
             "end_date": str(to_date(r.get(Enrollment.END)) or "") or None,
-            "sub_value": pd.to_numeric(r.get(Enrollment.SUB_VALUE), errors="coerce"),
-            "session_price_ref": pd.to_numeric(r.get(Enrollment.SESS_PRICE), errors="coerce"),
-            "student_hourly_rate": pd.to_numeric(r.get(Enrollment.STUDENT_RATE), errors="coerce"),
-            "teacher_hourly_rate": pd.to_numeric(r.get(Enrollment.TEACHER_RATE), errors="coerce"),
+            "sub_value": _num(r.get(Enrollment.SUB_VALUE)),
+            "session_price_ref": _num(r.get(Enrollment.SESS_PRICE)),
+            "student_hourly_rate": _num(r.get(Enrollment.STUDENT_RATE)),
+            "teacher_hourly_rate": _num(r.get(Enrollment.TEACHER_RATE)),
             "status": r.get(Enrollment.STATUS, "نشط"), "notes": r.get(Enrollment.NOTES, ""),
         })
         for day, t, m in parse_day_schedule(r.get(Enrollment.DAY_SCHEDULE, "")):
@@ -201,7 +213,7 @@ def migrate_sessions(sb, df: pd.DataFrame, enrollment_ids: dict, dry_run: bool) 
         rows.append({
             "code": code, "enrollment_id": enrollment_ids[e_code], "session_date": str(d),
             "start_time": r.get(Session.START_TIME, ""), "end_time": r.get(Session.END_TIME, ""),
-            "duration_minutes": pd.to_numeric(r.get(Session.DURATION), errors="coerce"),
+            "duration_minutes": _num(r.get(Session.DURATION)),
             "status": r.get(Session.STATUS, "تمت"), "cancel_reason": r.get(Session.CANCEL_RSN, ""),
             "surah": r.get(Session.SURAH, ""), "ayah_from": r.get(Session.AYAH_FROM, ""),
             "ayah_to": r.get(Session.AYAH_TO, ""), "amount_memorized": r.get(Session.AMOUNT, ""),
@@ -219,7 +231,7 @@ def migrate_parent_feedback(sb, df: pd.DataFrame, student_ids: dict, dry_run: bo
             continue
         rows.append({
             "code": code, "student_id": student_ids[s_code], "month": r.get(ParentFeedback.MONTH, ""),
-            "score": pd.to_numeric(r.get(ParentFeedback.SCORE), errors="coerce"),
+            "score": _num(r.get(ParentFeedback.SCORE)),
             "satisfaction": r.get(ParentFeedback.SATISFACTION, ""), "notes": r.get(ParentFeedback.NOTES, ""),
             "feedback_date": str(to_date(r.get(ParentFeedback.DATE)) or "") or None,
             "source": r.get(ParentFeedback.SOURCE, ""),

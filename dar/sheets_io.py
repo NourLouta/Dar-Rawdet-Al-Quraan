@@ -188,8 +188,13 @@ def _read_local_xlsx(ws_name: str) -> pd.DataFrame:
 def read_ws(key: str) -> pd.DataFrame:
     """
     قراءة ورقة واحدة بالمفتاح المنطقي.
-    الأولوية: gspread (لو متوفّر) ← ملف xlsx محلي (لو مضبوط) ← رابط CSV العام.
+    الأولوية: Supabase (Phase A3، فقط لو read_from=supabase في الإعدادات —
+    مستقل تمامًا عن write_target، لا يمكن أن يؤثر على الكتابة) ← gspread
+    (لو متوفّر) ← ملف xlsx محلي (لو مضبوط) ← رابط CSV العام.
     """
+    from . import supabase_io
+    if supabase_io.read_from_supabase():
+        return _drop_template_rows(key, supabase_io.read_ws(key))
     ws_name = WS_MAP.get(key, (key, None))[0]
     if get_client() is not None:
         df = _read_gspread(ws_name)
@@ -221,6 +226,8 @@ def clear_cache():
         pass
     get_client.cache_clear()
     _spreadsheet.cache_clear()
+    from . import supabase_io
+    supabase_io.clear_cache()
 
 
 # ════════════════════════════════════════════════════════════════════════════
