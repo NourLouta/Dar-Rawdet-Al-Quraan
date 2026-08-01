@@ -128,7 +128,10 @@ create table dar.sessions (
     code              text not null unique,
     enrollment_id     bigint not null references dar.enrollments(id),
     session_date      date not null,
-    month             text generated always as (to_char(session_date, 'YYYY-MM')) stored,
+    month             text generated always as (
+                          lpad(extract(year from session_date)::text, 4, '0') || '-' ||
+                          lpad(extract(month from session_date)::text, 2, '0')
+                      ) stored,
     start_time        text,
     end_time          text,
     duration_minutes  int,
