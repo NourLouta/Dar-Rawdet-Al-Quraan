@@ -108,15 +108,22 @@ def render():
         if st.button("📄 توليد التقويم (PDF)"):
             fname = f"{title}-{month}.pdf"
             fee_due = None
+            prepaid_count = 0
             if kind == "طالب":
                 month_sub = sub[sub[Session.MONTH].astype(str) == month] if Session.MONTH in sub.columns else sub
                 rev = fin.student_revenue(code, month_sub, month=None, enrollments=enroll,
                                           teachers=teachers, program_map=state.program_rate_map())
                 fee_due = rev["fee_rounded"]
-            pdf = doc.monthly_calendar_pdf(month, sub, title, "الحصص الشهرية", show_field=field, fee_due=fee_due)
+                if Session.PREPAID in month_sub.columns:
+                    prepaid_count = int((month_sub[Session.PREPAID].astype(str).str.strip() == "نعم").sum())
+            pdf = doc.monthly_calendar_pdf(month, sub, title, "الحصص الشهرية", show_field=field,
+                                           fee_due=fee_due, prepaid_count=prepaid_count)
             st.download_button("⬇️ تحميل التقويم", pdf, file_name=fname, mime="application/pdf")
             st.success("تم التوليد — حمّل الملف ثم شاركه.")
             msg = f"السلام عليكم ورحمة الله، إليكم جدول حصص {title} لشهر {month} من دار روضة القرآن."
+            if prepaid_count > 0:
+                msg += (f"\nملحوظة: التكلفة تشمل خصم {prepaid_count} حصة مرحَّلة (تعويض مدفوع مسبقًا "
+                        "من شهر سابق) — غير محتسبة كإيراد جديد هذا الشهر.")
             ui.whatsapp_button(phone, msg)
 
     # ── تقرير طالب ──────────────────────────────────────────────────────────────

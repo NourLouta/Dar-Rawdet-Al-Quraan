@@ -274,11 +274,13 @@ def _sessions_by_day(sessions_df, month_key):
 
 def monthly_calendar_pdf(month_key: str, sessions_df: pd.DataFrame,
                          title: str, subtitle: str, show_field: str = "student",
-                         fee_due: float | None = None) -> bytes:
+                         fee_due: float | None = None, prepaid_count: int = 0) -> bytes:
     """
     تقويم شهري بشبكة أسابيع (السبت→الجمعة). كل خلية: رقم اليوم + الحصص.
     show_field: 'student' يعرض اسم الطالب، 'teacher' يعرض اسم المحفظ، 'surah' السورة.
     fee_due: التكلفة المطلوبة خلال الشهر (لتقويم الطالب فقط) — تُعرض كبطاقة KPI رابعة.
+    prepaid_count: عدد الحصص المرحَّلة (تعويض مدفوع مسبقًا) من شهر سابق ضمن هذا
+    الشهر — تُعرض كملاحظة توضيحية أسفل البطاقات (غير محتسبة في التكلفة أعلاه).
     """
     S = _styles()
     buf = io.BytesIO()
@@ -304,6 +306,11 @@ def monthly_calendar_pdf(month_key: str, sessions_df: pd.DataFrame,
 
     story.append(Spacer(1, 0.3 * cm))
     story.append(_kpi_row(kpis))
+    if prepaid_count > 0:
+        story.append(Spacer(1, 0.2 * cm))
+        note = (f"* من ضمنها {prepaid_count} حصة مرحَّلة (تعويض مدفوع مسبقًا من شهر سابق) "
+                "— غير محتسبة في التكلفة أعلاه.")
+        story.append(Paragraph(ar(note), S["body"]))
     story.append(Spacer(1, 0.5 * cm))
 
     # ترويسة أيام الأسبوع
