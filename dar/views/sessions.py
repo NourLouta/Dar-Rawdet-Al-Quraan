@@ -313,6 +313,10 @@ def render():
 عدة حصص لطالب أو شهر معيّن. غيّري «حالة الحصة» في الجدول مباشرة (اختاري من القائمة)
 واكتبي سبب الإلغاء إن وُجد، ثم احفظي. **مهم:** الحصص الملغية تُستبعد تلقائيًا من
 حساب الساعات والمرتبات والإيرادات في شاشة «المالية».
+
+**عدّلتِ مدة تسجيل من شاشة «التسجيلات» بعد توليد حصصه؟** التعديل هناك لا يُطبَّق
+تلقائيًا على الحصص المولَّدة مسبقًا (وإعادة التوليد **تتجاهلها** لأنها موجودة
+بالفعل) — صحّحي «مدة الحصة» لهذه الحصص من هنا مباشرة بدل ذلك.
 """)
         can = state.write_banner()
         if sessions.empty:
@@ -332,13 +336,16 @@ def render():
             if sub.empty:
                 st.info("لا توجد حصص مطابقة.")
             else:
-                st.caption("غيّر «حالة الحصة» لأي صفوف (مثلاً: ملغية - طالب) ثم اضغط حفظ التغييرات. "
-                           "الحصص الملغية لا تُحتسب في الساعات أو الرواتب.")
+                st.caption("غيّر «حالة الحصة» أو «مدة الحصة» لأي صفوف ثم اضغط حفظ التغييرات. "
+                           "الحصص الملغية لا تُحتسب في الساعات أو الرواتب — وتغيير المدة يُحدِّث "
+                           "«وقت النهاية» تلقائيًا.")
                 view_cols = [Session.CODE, Session.DATE, Session.START_TIME,
                              Session.STUDENT_NAME, Session.TEACHER_NAME,
-                             Session.STATUS, Session.CANCEL_RSN]
+                             Session.STATUS, Session.CANCEL_RSN, Session.DURATION]
                 view_cols = [c for c in view_cols if c in sub.columns]
                 editable = sub[view_cols].copy().reset_index(drop=True)
+                if Session.DURATION in editable.columns:
+                    editable[Session.DURATION] = pd.to_numeric(editable[Session.DURATION], errors="coerce")
                 orig = editable.copy()
                 edited = st.data_editor(
                     editable, hide_index=True, use_container_width=True, height=420,
@@ -349,6 +356,8 @@ def render():
                         Session.STATUS: st.column_config.SelectboxColumn(
                             Session.STATUS, options=statuses, width="medium"),
                         Session.CANCEL_RSN: st.column_config.TextColumn(Session.CANCEL_RSN),
+                        Session.DURATION: st.column_config.SelectboxColumn(
+                            Session.DURATION, options=[15, 20, 25, 30, 45, 60, 90, 120], width="small"),
                     },
                 )
                 if st.button("💾 حفظ التغييرات", disabled=not can):
@@ -361,6 +370,13 @@ def render():
                         if (Session.CANCEL_RSN in edited.columns and
                                 str(edited.iloc[i][Session.CANCEL_RSN]) != str(orig.iloc[i][Session.CANCEL_RSN])):
                             upd[Session.CANCEL_RSN] = edited.iloc[i][Session.CANCEL_RSN]
+                        if (Session.DURATION in edited.columns and
+                                edited.iloc[i][Session.DURATION] != orig.iloc[i][Session.DURATION]):
+                            new_min = edited.iloc[i][Session.DURATION]
+                            upd[Session.DURATION] = int(new_min)
+                            stime = parse_arabic_time(edited.iloc[i].get(Session.START_TIME, ""))
+                            if stime:
+                                upd[Session.END_TIME] = format_arabic_time(add_minutes(stime, int(new_min)))
                         if upd:
                             try:
                                 io.update_row_by_code("sessions", Session.CODE, code, upd)
