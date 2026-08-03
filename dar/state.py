@@ -6,7 +6,7 @@ import streamlit as st
 
 from . import sheets_io as io
 from . import config
-from .schema import Session, Student, Program, Branch
+from .schema import Session, Student, Program, Branch, Enrollment
 
 
 def get_data(force: bool = False) -> dict:
@@ -103,6 +103,27 @@ def active_mask(df: pd.DataFrame, col=Student.STATUS):
     if df is None or df.empty or col not in df.columns:
         return pd.Series([False] * (0 if df is None else len(df)))
     return df[col].astype(str).str.contains("نشط", na=False)
+
+
+def enrollment_options(enroll_df: pd.DataFrame) -> list[tuple[str, int]]:
+    """
+    قائمة خيارات [(تسمية، رقم الصف)] لاختيار تسجيل — التسجيلات النشطة أولًا،
+    وأي تسجيل غير نشط (منتهي/موقوف) تُضاف حالته صراحةً للتسمية. يمنع هذا
+    الخلط بين تسجيل قديم منتهي وتسجيل حالي لنفس الطالب (نفس الاسم يظهر في
+    الاثنين) عند الاختيار من القائمة في شاشات الحصص/التسجيلات.
+    """
+    if enroll_df is None or enroll_df.empty:
+        return []
+    rows = []
+    for i, r in enroll_df.iterrows():
+        label = r.get(Enrollment.DISPLAY) or r.get(Enrollment.CODE, f"صف {i}")
+        status = str(r.get(Enrollment.STATUS, "")).strip()
+        is_active = "نشط" in status
+        if status and not is_active:
+            label = f"{label} — {status}"
+        rows.append((is_active, label, i))
+    rows.sort(key=lambda x: not x[0])  # النشطة أولًا
+    return [(label, i) for _, label, i in rows]
 
 
 def write_banner():

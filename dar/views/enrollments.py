@@ -211,8 +211,7 @@ def render():
         if enroll.empty:
             st.info("لا توجد تسجيلات لتعديلها.")
         else:
-            opts = [(r.get(Enrollment.DISPLAY) or r.get(Enrollment.CODE, f"صف {i}"), i)
-                    for i, r in enroll.iterrows()]
+            opts = state.enrollment_options(enroll)
             sel = st.selectbox("اختر التسجيل", [o[0] for o in opts], key="enr_edit_sel")
             row = enroll.loc[dict(opts)[sel]].to_dict()
             ecode = row.get(Enrollment.CODE, "")

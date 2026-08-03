@@ -155,8 +155,7 @@ def render():
         if enroll.empty:
             st.warning("أضف تسجيلًا بنمط أسبوعي أولًا.")
         else:
-            opts = [(r.get(Enrollment.DISPLAY) or r.get(Enrollment.CODE, f"صف {i}"), i)
-                    for i, r in enroll.iterrows()]
+            opts = state.enrollment_options(enroll)
             sel = st.selectbox("اختر التسجيل", [o[0] for o in opts])
             idx = dict(opts)[sel]
             enr = enroll.loc[idx].to_dict()
@@ -221,8 +220,7 @@ def render():
             st.warning("أضف تسجيلًا أولًا.")
         else:
             st.caption("لإضافة حصة واحدة خارج الجدول الأسبوعي (مثل يوم إضافي أو تعويض).")
-            opts = [(r.get(Enrollment.DISPLAY) or r.get(Enrollment.CODE, f"صف {i}"), i)
-                    for i, r in enroll.iterrows()]
+            opts = state.enrollment_options(enroll)
             sel1 = st.selectbox("اختر التسجيل", [o[0] for o in opts], key="single_enr")
             enr1 = enroll.loc[dict(opts)[sel1]].to_dict()
             times = state.lk("time_slots") or ["5:00 م"]
