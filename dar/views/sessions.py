@@ -214,6 +214,10 @@ def render():
 أو تعويض حصة فائتة. لا تستخدمي هذا لتعديل الجدول الدائم؛ عدّلي التسجيل بدلًا من ذلك
 لو كان التغيير سيتكرر كل أسبوع. **حماية تلقائية:** لن تُضاف حصة مكرَّرة لنفس
 التسجيل في نفس التاريخ.
+
+**تعويض عن شهر سابق مدفوع بالفعل؟** فعّلي خيار «تعويض مدفوع مسبقًا» أسفل — الحصة
+تظهر عاديًا في الجدول والمحفظة تُصرف لها كالمعتاد، لكنها **لا تُحتسب كإيراد جديد**
+على الطالب هذا الشهر (لتجنّب حساب مبلغ دفعه الطالب بالفعل في شهره الأصلي مرتين).
 """)
         can = state.write_banner()
         if enroll.empty:
@@ -229,6 +233,9 @@ def render():
             s_time = sc2.selectbox("الوقت", times, key="single_time")
             s_min = sc3.selectbox("المدة (دقيقة)", [15, 20, 25, 30, 45, 60, 90, 120], key="single_min")
             s_stat = sc4.selectbox("الحالة", statuses, key="single_stat")
+            prepaid = st.checkbox(
+                "💰 تعويض مدفوع مسبقًا (لا تُحتسب كإيراد جديد على الطالب هذا الشهر — تُصرف للمحفظة عاديًا)",
+                key="single_prepaid")
             if st.button("➕ إضافة الحصة", disabled=not can):
                 from ..schema import parse_arabic_time, format_arabic_time, add_minutes, month_key
                 stime = parse_arabic_time(s_time)
@@ -250,11 +257,13 @@ def render():
                         Session.START_TIME: format_arabic_time(stime),
                         Session.END_TIME: format_arabic_time(etime),
                         Session.DURATION: int(s_min), Session.STATUS: s_stat,
+                        Session.PREPAID: "نعم" if prepaid else "",
                     }
                     try:
                         io.append_row("sessions", row)
                         state.get_data(force=True)
-                        st.success(f"✅ تمت إضافة حصة {code} بتاريخ {s_date} للطالب {row[Session.STUDENT_NAME]}.")
+                        paid_note = " (تعويض مدفوع مسبقًا — لن تُحتسب إيرادًا جديدًا)" if prepaid else ""
+                        st.success(f"✅ تمت إضافة حصة {code} بتاريخ {s_date} للطالب {row[Session.STUDENT_NAME]}{paid_note}.")
                     except Exception as e:
                         st.error(f"تعذّر الإضافة: {e}")
 

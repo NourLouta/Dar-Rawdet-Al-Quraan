@@ -155,7 +155,11 @@ def _amounts(sessions_df, teachers, enrollments, month=None, program_map=None) -
         trates.append(t)
     df["_srate"] = srates
     df["_trate"] = trates
-    df["_samt"] = df["_hours"] * df["_srate"]
+    # حصة تعويض مدفوعة مسبقًا (عن شهر سابق مدفوع بالفعل): تُستبعد من إيراد
+    # الطالب فقط — المعلّم يُصرَف له عاديًا لأنه أدّى الحصة فعليًا.
+    prepaid = df[Session.PREPAID].astype(str).str.strip().isin(["نعم", "true", "True", "1"]) \
+        if Session.PREPAID in df.columns else pd.Series(False, index=df.index)
+    df["_samt"] = (df["_hours"] * df["_srate"]).where(~prepaid, 0.0)
     df["_tamt"] = df["_hours"] * df["_trate"]
     return df
 

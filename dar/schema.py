@@ -121,6 +121,7 @@ class Session:
     AMOUNT      = "مقدار الحفظ"
     RATING      = "تقييم الأداء"
     NOTES       = "ملاحظات المحفظ"
+    PREPAID     = "تعويض مدفوع مسبقًا"   # حصة تعويض عن شهر سابق مدفوع بالفعل — تُستبعد من إيراد الطالب فقط
 
 
 class Program:
@@ -172,7 +173,7 @@ HEADERS = {
     "sessions": [getattr(Session, a) for a in
         ("CODE","ENROLL_CODE","STUDENT_CODE","STUDENT_NAME","TEACHER_CODE",
          "TEACHER_NAME","DATE","MONTH","START_TIME","END_TIME","DURATION","STATUS",
-         "CANCEL_RSN","SURAH","AYAH_FROM","AYAH_TO","AMOUNT","RATING","NOTES")],
+         "CANCEL_RSN","SURAH","AYAH_FROM","AYAH_TO","AMOUNT","RATING","NOTES","PREPAID")],
     "pfeedback": [getattr(ParentFeedback, a) for a in
         ("CODE","STUDENT_CODE","STUDENT_NAME","MONTH","SCORE","SATISFACTION",
          "NOTES","DATE","SOURCE")],
