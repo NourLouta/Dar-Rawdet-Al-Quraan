@@ -237,7 +237,6 @@ def render():
                 "💰 تعويض مدفوع مسبقًا (لا تُحتسب كإيراد جديد على الطالب هذا الشهر — تُصرف للمحفظة عاديًا)",
                 key="single_prepaid")
             if st.button("➕ إضافة الحصة", disabled=not can):
-                from ..schema import parse_arabic_time, format_arabic_time, add_minutes, month_key
                 stime = parse_arabic_time(s_time)
                 etime = add_minutes(stime, int(s_min)) if stime else None
                 e_code = str(enr1.get(Enrollment.CODE, "")).strip()
