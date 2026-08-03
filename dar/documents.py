@@ -273,10 +273,12 @@ def _sessions_by_day(sessions_df, month_key):
 
 
 def monthly_calendar_pdf(month_key: str, sessions_df: pd.DataFrame,
-                         title: str, subtitle: str, show_field: str = "student") -> bytes:
+                         title: str, subtitle: str, show_field: str = "student",
+                         fee_due: float | None = None) -> bytes:
     """
     تقويم شهري بشبكة أسابيع (السبت→الجمعة). كل خلية: رقم اليوم + الحصص.
     show_field: 'student' يعرض اسم الطالب، 'teacher' يعرض اسم المحفظ، 'surah' السورة.
+    fee_due: التكلفة المطلوبة خلال الشهر (لتقويم الطالب فقط) — تُعرض كبطاقة KPI رابعة.
     """
     S = _styles()
     buf = io.BytesIO()
@@ -292,12 +294,16 @@ def monthly_calendar_pdf(month_key: str, sessions_df: pd.DataFrame,
     by_day = _sessions_by_day(sessions_df, month_key)
     total = sum(len(v) for v in by_day.values())
 
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(_kpi_row([
+    kpis = [
         (total, "إجمالي الحصص", C_TEAL),
-        (len(by_day), "أيام بها حصص", C_GOLD_DARK := _rgb(T.PDF_GOLD)),
+        (len(by_day), "أيام بها حصص", _rgb(T.PDF_GOLD)),
         (_month_label(month_key), "الشهر", C_TEAL_D),
-    ]))
+    ]
+    if fee_due is not None:
+        kpis.append((f"{fee_due:.0f} ج.م", "التكلفة المطلوبة", _rgb(T.PDF_GOLD)))
+
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(_kpi_row(kpis))
     story.append(Spacer(1, 0.5 * cm))
 
     # ترويسة أيام الأسبوع

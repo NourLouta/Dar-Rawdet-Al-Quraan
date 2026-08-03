@@ -107,7 +107,13 @@ def render():
             return
         if st.button("📄 توليد التقويم (PDF)"):
             fname = f"{title}-{month}.pdf"
-            pdf = doc.monthly_calendar_pdf(month, sub, title, "الحصص الشهرية", show_field=field)
+            fee_due = None
+            if kind == "طالب":
+                month_sub = sub[sub[Session.MONTH].astype(str) == month] if Session.MONTH in sub.columns else sub
+                rev = fin.student_revenue(code, month_sub, month=None, enrollments=enroll,
+                                          teachers=teachers, program_map=state.program_rate_map())
+                fee_due = rev["fee_rounded"]
+            pdf = doc.monthly_calendar_pdf(month, sub, title, "الحصص الشهرية", show_field=field, fee_due=fee_due)
             st.download_button("⬇️ تحميل التقويم", pdf, file_name=fname, mime="application/pdf")
             st.success("تم التوليد — حمّل الملف ثم شاركه.")
             msg = f"السلام عليكم ورحمة الله، إليكم جدول حصص {title} لشهر {month} من دار روضة القرآن."
