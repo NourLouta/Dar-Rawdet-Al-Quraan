@@ -316,6 +316,10 @@ def render():
 **عدّلتِ مدة تسجيل من شاشة «التسجيلات» بعد توليد حصصه؟** التعديل هناك لا يُطبَّق
 تلقائيًا على الحصص المولَّدة مسبقًا (وإعادة التوليد **تتجاهلها** لأنها موجودة
 بالفعل) — صحّحي «مدة الحصة» لهذه الحصص من هنا مباشرة بدل ذلك.
+
+**حصة اتولّدت بالفعل وتبيّن إنها تعويض مدفوع من شهر سابق؟** لا داعي لحذفها
+وإعادة إضافتها — فعّلي عمود «💰 مدفوعة مسبقًا» لها من هنا مباشرة، والتكلفة تُخصم
+تلقائيًا من إيراد الطالب لهذا الشهر.
 """)
         can = state.write_banner()
         if sessions.empty:
@@ -340,11 +344,14 @@ def render():
                            "«وقت النهاية» تلقائيًا.")
                 view_cols = [Session.CODE, Session.DATE, Session.START_TIME,
                              Session.STUDENT_NAME, Session.TEACHER_NAME,
-                             Session.STATUS, Session.CANCEL_RSN, Session.DURATION]
+                             Session.STATUS, Session.CANCEL_RSN, Session.DURATION, Session.PREPAID]
                 view_cols = [c for c in view_cols if c in sub.columns]
                 editable = sub[view_cols].copy().reset_index(drop=True)
                 if Session.DURATION in editable.columns:
                     editable[Session.DURATION] = pd.to_numeric(editable[Session.DURATION], errors="coerce")
+                if Session.PREPAID in editable.columns:
+                    editable[Session.PREPAID] = editable[Session.PREPAID].astype(str).str.strip().isin(
+                        ["نعم", "true", "True", "1"])
                 orig = editable.copy()
                 edited = st.data_editor(
                     editable, hide_index=True, use_container_width=True, height=420,
@@ -357,6 +364,8 @@ def render():
                         Session.CANCEL_RSN: st.column_config.TextColumn(Session.CANCEL_RSN),
                         Session.DURATION: st.column_config.SelectboxColumn(
                             Session.DURATION, options=[15, 20, 25, 30, 45, 60, 90, 120], width="small"),
+                        Session.PREPAID: st.column_config.CheckboxColumn(
+                            "💰 مدفوعة مسبقًا", help="حصة تعويض دُفعت في شهر سابق — لا تُحتسب كإيراد جديد هذا الشهر"),
                     },
                 )
                 if st.button("💾 حفظ التغييرات", disabled=not can):
@@ -376,6 +385,9 @@ def render():
                             stime = parse_arabic_time(edited.iloc[i].get(Session.START_TIME, ""))
                             if stime:
                                 upd[Session.END_TIME] = format_arabic_time(add_minutes(stime, int(new_min)))
+                        if (Session.PREPAID in edited.columns and
+                                bool(edited.iloc[i][Session.PREPAID]) != bool(orig.iloc[i][Session.PREPAID])):
+                            upd[Session.PREPAID] = "نعم" if edited.iloc[i][Session.PREPAID] else ""
                         if upd:
                             try:
                                 io.update_row_by_code("sessions", Session.CODE, code, upd)
