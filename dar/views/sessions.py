@@ -378,13 +378,16 @@ def render():
                         if (Session.CANCEL_RSN in edited.columns and
                                 str(edited.iloc[i][Session.CANCEL_RSN]) != str(orig.iloc[i][Session.CANCEL_RSN])):
                             upd[Session.CANCEL_RSN] = edited.iloc[i][Session.CANCEL_RSN]
-                        if (Session.DURATION in edited.columns and
-                                edited.iloc[i][Session.DURATION] != orig.iloc[i][Session.DURATION]):
-                            new_min = edited.iloc[i][Session.DURATION]
-                            upd[Session.DURATION] = int(new_min)
-                            stime = parse_arabic_time(edited.iloc[i].get(Session.START_TIME, ""))
-                            if stime:
-                                upd[Session.END_TIME] = format_arabic_time(add_minutes(stime, int(new_min)))
+                        if Session.DURATION in edited.columns:
+                            new_dur = edited.iloc[i][Session.DURATION]
+                            old_dur = orig.iloc[i][Session.DURATION]
+                            dur_changed = not (pd.isna(new_dur) and pd.isna(old_dur)) and new_dur != old_dur
+                            if dur_changed and pd.notna(new_dur):
+                                new_min = int(new_dur)
+                                upd[Session.DURATION] = new_min
+                                stime = parse_arabic_time(edited.iloc[i].get(Session.START_TIME, ""))
+                                if stime:
+                                    upd[Session.END_TIME] = format_arabic_time(add_minutes(stime, new_min))
                         if (Session.PREPAID in edited.columns and
                                 bool(edited.iloc[i][Session.PREPAID]) != bool(orig.iloc[i][Session.PREPAID])):
                             upd[Session.PREPAID] = "نعم" if edited.iloc[i][Session.PREPAID] else ""
